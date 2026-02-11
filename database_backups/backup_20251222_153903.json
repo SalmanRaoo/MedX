@@ -1,0 +1,1 @@
+[{"patient_id": 1, "dob": "2025-12-22", "phone_number": "00000000", "gender": "male", "full_name": "abc", "insurance_provider_id": 0}, {"patient_id": 2, "dob": "2025-12-22", "phone_number": "0000000", "gender": "female", "full_name": "xyz", "insurance_provider_id": 0}]
