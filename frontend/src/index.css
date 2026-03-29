@@ -1,0 +1,47 @@
+@import url("https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=Sora:wght@600;700;800&display=swap");
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --bg-soft: #f6fbfd;
+  --text-main: #0f172a;
+}
+
+@layer base {
+  body {
+    margin: 0;
+    font-family: "Manrope", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+    color: var(--text-main);
+    background: radial-gradient(circle at 80% -10%, #d9f4ff 0%, transparent 45%), var(--bg-soft);
+  }
+
+  h1,
+  h2,
+  h3,
+  h4,
+  h5,
+  h6 {
+    font-family: "Sora", "Manrope", ui-sans-serif, sans-serif;
+  }
+}
+
+@layer utilities {
+  .bg-app {
+    background: radial-gradient(circle at 90% -20%, #d9f4ff 0%, transparent 45%), #f6fbfd;
+  }
+
+  .hero-glow {
+    position: absolute;
+    top: -140px;
+    right: -120px;
+    width: 420px;
+    height: 420px;
+    border-radius: 9999px;
+    background: linear-gradient(135deg, #22d3ee, #0ea5e9);
+    opacity: 0.14;
+    filter: blur(45px);
+    pointer-events: none;
+  }
+}
