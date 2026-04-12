@@ -2,6 +2,7 @@ import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import Sidebar from "../components/Sidebar";
 import { api } from "../lib/api";
+import { useHospitalSettings } from "../context/HospitalSettingsContext";
 import {
   Search, UserPlus, X, ShieldCheck, Users,
   Activity, BrainCircuit, Loader2, CheckCircle, Building2
@@ -10,8 +11,11 @@ import {
 export default function DashboardLayout() {
   const navigate = useNavigate();
   const user = JSON.parse(localStorage.getItem("medx_user") || "{}");
+  const { hospitalName } = useHospitalSettings();
   const [stats, setStats] = useState({ patients: 0, staff: 0, ai: 0 });
   const [usersList, setUsersList] = useState([]);
+  const [patientsList, setPatientsList] = useState([]);
+  const [activeDirectory, setActiveDirectory] = useState("staff");
   const [searchQuery, setSearchQuery] = useState("");
   const [isLoading, setIsLoading] = useState(true);
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -51,10 +55,12 @@ export default function DashboardLayout() {
       const staff = staffRes.data?.items || [];
       const patients = patRes.data?.items || [];
       const ai = aiRes.data?.items || [];
+      const visibleStaff = staff.filter((member) => String(member.role || "").toUpperCase() !== "SUPER_ADMIN");
 
-      setUsersList(staff);
-      setStats({ staff: staff.length, patients: patients.length, ai: ai.length });
-      setDbStatus(staff.length === 0 ? "Empty" : "Optimal");
+      setUsersList(visibleStaff);
+      setPatientsList(patients);
+      setStats({ staff: visibleStaff.length, patients: patients.length, ai: ai.length });
+      setDbStatus(visibleStaff.length === 0 && patients.length === 0 ? "Empty" : "Optimal");
     } catch {
       setDbStatus("Offline");
     } finally {
@@ -69,7 +75,10 @@ export default function DashboardLayout() {
   const getRoleBadge = (role) => {
     const roles = {
       DOCTOR: "bg-blue-100 text-blue-700 border-blue-200",
+      RADIOLOGIST: "bg-indigo-100 text-indigo-700 border-indigo-200",
       ADMIN: "bg-purple-100 text-purple-700 border-purple-200",
+      ACCOUNTANT: "bg-amber-100 text-amber-700 border-amber-200",
+      FLEET: "bg-orange-100 text-orange-700 border-orange-200",
       RECEPTIONIST: "bg-teal-100 text-teal-700 border-teal-200",
       NURSE: "bg-emerald-100 text-emerald-700 border-emerald-200",
     };
@@ -104,7 +113,16 @@ export default function DashboardLayout() {
   const filteredUsers = usersList.filter(
     (u) =>
       u.full_name?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      u.role?.toLowerCase().includes(searchQuery.toLowerCase())
+      u.role?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      u.phone_number?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      u.email?.toLowerCase().includes(searchQuery.toLowerCase())
+  );
+  const filteredPatients = patientsList.filter(
+    (p) =>
+      p.full_name?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      p.patient_mrn?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      p.phone_number?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      p.portal_email?.toLowerCase().includes(searchQuery.toLowerCase())
   );
 
   return (
@@ -121,12 +139,18 @@ export default function DashboardLayout() {
         <header className="h-20 bg-white border-b flex items-center justify-between px-8 shadow-sm">
           <div className="flex-1 max-w-xl relative">
             <Search className="absolute left-4 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
-            <input type="text" placeholder="Search staff..." className="w-full pl-12 pr-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-sm outline-none" value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} />
+            <input
+              type="text"
+              placeholder={activeDirectory === "staff" ? "Search staff..." : "Search patients..."}
+              className="w-full pl-12 pr-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-sm outline-none"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+            />
           </div>
           <div className="ml-6 flex items-center gap-3 rounded-xl border border-slate-200 px-3 py-2">
             <Building2 className="h-4 w-4 text-slate-500" />
             <div>
-              <p className="text-xs font-bold text-slate-500">{user.hospital_name || "Hospital"}</p>
+              <p className="text-xs font-bold text-slate-500">{hospitalName || user.hospital_name || "Hospital"}</p>
               <p className="text-[10px] uppercase tracking-[0.12em] text-cyan-700">Admin Dashboard</p>
             </div>
           </div>
@@ -152,25 +176,95 @@ export default function DashboardLayout() {
 
           <div className="bg-white rounded-[32px] border border-slate-100 shadow-xl overflow-hidden">
             <div className="p-6 border-b bg-slate-50/50">
-              <h3 className="font-black text-slate-800 uppercase tracking-widest text-[10px]">Hospital Staff Directory</h3>
+              <div className="flex items-center justify-between gap-4 flex-wrap">
+                <div className="inline-flex rounded-2xl border border-slate-200 bg-white p-1">
+                  <button
+                    type="button"
+                    onClick={() => setActiveDirectory("staff")}
+                    className={`rounded-xl px-5 py-2 text-sm font-bold transition ${
+                      activeDirectory === "staff"
+                        ? "bg-teal-600 text-white"
+                        : "text-slate-600 hover:bg-slate-100"
+                    }`}
+                  >
+                    Staff
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setActiveDirectory("patient")}
+                    className={`rounded-xl px-5 py-2 text-sm font-bold transition ${
+                      activeDirectory === "patient"
+                        ? "bg-cyan-600 text-white"
+                        : "text-slate-600 hover:bg-slate-100"
+                    }`}
+                  >
+                    Patient
+                  </button>
+                </div>
+                <span className="text-xs font-semibold text-slate-500">
+                  {activeDirectory === "staff" ? filteredUsers.length : filteredPatients.length} records
+                </span>
+              </div>
+              <h3 className="mt-4 font-black text-slate-800 uppercase tracking-widest text-[10px]">
+                {activeDirectory === "staff" ? "Hospital Staff Directory" : "Patient Registry"}
+              </h3>
             </div>
-            <table className="w-full text-left">
-              <thead className="bg-white text-[10px] font-black text-slate-400 uppercase tracking-widest">
-                <tr><th className="px-8 py-5">Name</th><th className="px-8 py-5">Role</th><th className="px-8 py-5">Department</th><th className="px-8 py-5 text-right">Status</th></tr>
-              </thead>
-              <tbody className="divide-y text-sm">
-                {isLoading ? (
-                  <tr><td colSpan="4" className="py-24 text-center"><Loader2 className="animate-spin mx-auto text-teal-600" /></td></tr>
-                ) : filteredUsers.map((userRow) => (
-                  <tr key={userRow.staff_id} className="hover:bg-slate-50 transition-colors">
-                    <td className="px-8 py-5 font-bold text-slate-700">{userRow.full_name}</td>
-                    <td className="px-8 py-5"><span className={`px-3 py-1 rounded-full border text-[10px] font-black uppercase tracking-widest ${getRoleBadge(userRow.role)}`}>{userRow.role}</span></td>
-                    <td className="px-8 py-5 text-slate-500">{userRow.department_id ? `#${userRow.department_id}` : "-"}</td>
-                    <td className="px-8 py-5 text-right"><span className="px-3 py-1 bg-green-50 text-green-600 rounded-full text-[10px] font-black uppercase tracking-widest border border-green-100">Active</span></td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+
+            <div className="max-h-[36rem] overflow-auto p-5 space-y-4">
+              {isLoading ? (
+                <div className="py-20 text-center"><Loader2 className="animate-spin mx-auto text-teal-600" /></div>
+              ) : activeDirectory === "staff" ? (
+                filteredUsers.length === 0 ? (
+                  <div className="px-6 py-12 text-center text-slate-500">No staff records available.</div>
+                ) : (
+                  filteredUsers.map((userRow) => (
+                    <article key={userRow.staff_id} className="rounded-2xl border border-slate-200 bg-slate-50/70 p-4">
+                      <div className="flex items-center justify-between gap-3">
+                        <div>
+                          <p className="font-bold text-slate-800">{userRow.full_name}</p>
+                          <p className="text-xs text-slate-500">Staff Profile</p>
+                        </div>
+                        <span className={`px-3 py-1 rounded-full border text-[10px] font-black uppercase tracking-widest ${getRoleBadge(userRow.role)}`}>
+                          {userRow.role}
+                        </span>
+                      </div>
+                      <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-2">
+                        <ReadOnlyField label="Staff ID" value={userRow.staff_id ? `#${userRow.staff_id}` : "-"} />
+                        <ReadOnlyField label="Email" value={userRow.email || "-"} />
+                        <ReadOnlyField label="Phone Number" value={userRow.phone_number || "-"} />
+                        <ReadOnlyField label="Department ID" value={userRow.department_id ? `#${userRow.department_id}` : "-"} />
+                        <ReadOnlyField label="Current Status" value="ACTIVE" />
+                      </div>
+                    </article>
+                  ))
+                )
+              ) : filteredPatients.length === 0 ? (
+                <div className="px-6 py-12 text-center text-slate-500">No patient records available.</div>
+              ) : (
+                filteredPatients.map((patientRow) => (
+                  <article key={patientRow.patient_id} className="rounded-2xl border border-slate-200 bg-slate-50/70 p-4">
+                    <div className="flex items-center justify-between gap-3">
+                      <div>
+                        <p className="font-bold text-slate-800">{patientRow.full_name}</p>
+                        <p className="text-xs text-slate-500">Patient Profile</p>
+                      </div>
+                      <span className="px-3 py-1 bg-cyan-50 text-cyan-700 rounded-full text-[10px] font-black uppercase tracking-widest border border-cyan-100">
+                        Registered
+                      </span>
+                    </div>
+                      <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-2">
+                        <ReadOnlyField label="Patient ID" value={patientRow.patient_id ? `#${patientRow.patient_id}` : "-"} />
+                        <ReadOnlyField label="Portal Email" value={patientRow.portal_email || "-"} />
+                        <ReadOnlyField label="MRN" value={patientRow.patient_mrn || "-"} />
+                        <ReadOnlyField label="Gender" value={patientRow.gender || "-"} />
+                        <ReadOnlyField label="Date of Birth" value={patientRow.dob || "-"} />
+                      <ReadOnlyField label="Phone Number" value={patientRow.phone_number || "-"} />
+                      <ReadOnlyField label="CNIC" value={patientRow.cnic_number || "-"} />
+                    </div>
+                  </article>
+                ))
+              )}
+            </div>
           </div>
         </main>
       </div>
@@ -187,7 +281,7 @@ export default function DashboardLayout() {
               <input type="email" placeholder="Email (login)" className="p-3 bg-slate-50 border rounded-xl" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} required />
               <input type="password" placeholder="Temporary Password" className="p-3 bg-slate-50 border rounded-xl" value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} required />
               <select className="p-3 bg-slate-50 border rounded-xl" value={form.role_name} onChange={(e) => setForm({ ...form, role_name: e.target.value })}>
-                <option value="DOCTOR">Doctor</option><option value="ADMIN">Admin</option><option value="NURSE">Nurse</option><option value="RECEPTIONIST">Receptionist</option><option value="PHARMACY">Pharmacy</option><option value="LAB">Lab</option><option value="FINANCE">Finance</option><option value="OPERATIONS">Operations</option>
+                <option value="DOCTOR">Doctor</option><option value="RADIOLOGIST">Radiologist</option><option value="ADMIN">Admin</option><option value="NURSE">Nurse</option><option value="RECEPTIONIST">Receptionist</option><option value="PHARMACY">Pharmacy</option><option value="LAB">Lab</option><option value="ACCOUNTANT">Accountant</option><option value="FLEET">Fleet</option><option value="OPERATIONS">Operations</option>
               </select>
               <input type="text" placeholder="Phone Number" className="p-3 bg-slate-50 border rounded-xl" value={form.phone_number} onChange={(e) => setForm({ ...form, phone_number: e.target.value })} />
               <input type="text" placeholder="License Number (optional)" className="p-3 bg-slate-50 border rounded-xl" value={form.license_number} onChange={(e) => setForm({ ...form, license_number: e.target.value })} />
@@ -216,5 +310,16 @@ function MetricCard({ label, value, icon, isStatus }) {
         </h3>
       </div>
     </div>
+  );
+}
+
+function ReadOnlyField({ label, value }) {
+  return (
+    <label className="block">
+      <span className="mb-1 block text-[10px] font-black uppercase tracking-[0.14em] text-slate-500">{label}</span>
+      <div className="rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm font-semibold text-slate-700">
+        {value || "-"}
+      </div>
+    </label>
   );
 }

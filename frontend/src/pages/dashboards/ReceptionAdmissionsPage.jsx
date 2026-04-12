@@ -1,9 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { api } from "../../lib/api";
-import RoleDashboardShell from "../../components/dashboards/RoleDashboardShell";
+import ReceptionWorkspaceLayout from "../../components/dashboards/ReceptionWorkspaceLayout";
+import { useHospitalSettings } from "../../context/HospitalSettingsContext";
 
 export default function ReceptionAdmissionsPage() {
+  const { settings } = useHospitalSettings();
   const [patients, setPatients] = useState([]);
   const [admissions, setAdmissions] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -66,8 +68,19 @@ export default function ReceptionAdmissionsPage() {
     }
   };
 
-  const printReceipt = () => {
+  const printReceipt = async () => {
     if (!receipt) return;
+    let settingsMeta = settings?.hospital_metadata || {};
+    try {
+      const { data } = await api.get("/settings");
+      settingsMeta = data?.hospital_metadata || settingsMeta;
+    } catch {
+      // fallback to context / receipt snapshot
+    }
+    const hospitalName = settingsMeta.hospital_name || receipt.hospital_name || "MedX Hospital";
+    const hospitalAddress = settingsMeta.address || receipt.hospital_address || "";
+    const hospitalLogo = settingsMeta.logo_url || receipt.hospital_logo_url || "";
+
     const popup = window.open("", "_blank", "width=900,height=900");
     if (!popup) return;
 
@@ -80,7 +93,9 @@ export default function ReceptionAdmissionsPage() {
             * { box-sizing: border-box; }
             body { margin: 0; font-family: "Segoe UI", Arial, sans-serif; color: #0f172a; background: #f1f5f9; }
             .sheet { background: #fff; border: 1px solid #dbe4ff; border-radius: 16px; overflow: hidden; }
-            .topbar { background: linear-gradient(120deg, #111827, #1d4ed8); color: #fff; padding: 18px 22px; display: flex; justify-content: space-between; align-items: center; }
+            .topbar { background: linear-gradient(120deg, #111827, #1d4ed8); color: #fff; padding: 18px 22px; display: flex; justify-content: space-between; align-items: center; gap: 14px; }
+            .brand-wrap { display: flex; align-items: center; gap: 12px; }
+            .brand-logo { width: 42px; height: 42px; border-radius: 10px; object-fit: cover; background: rgba(255,255,255,0.9); padding: 3px; }
             .brand h1 { margin: 0; font-size: 20px; }
             .brand p { margin: 4px 0 0; font-size: 12px; opacity: 0.9; }
             .badge { background: rgba(255,255,255,0.2); border: 1px solid rgba(255,255,255,0.35); border-radius: 999px; padding: 6px 12px; font-size: 11px; font-weight: 700; }
@@ -100,9 +115,13 @@ export default function ReceptionAdmissionsPage() {
         <body>
           <div class="sheet">
             <div class="topbar">
-              <div class="brand">
-                <h1>MedX Admission Receipt</h1>
-                <p>Reception Admission Desk</p>
+              <div class="brand-wrap">
+                ${hospitalLogo ? `<img src="${hospitalLogo}" alt="logo" class="brand-logo" />` : ""}
+                <div class="brand">
+                  <h1>${hospitalName}</h1>
+                  <p>Reception Admission Desk</p>
+                  ${hospitalAddress ? `<p>${hospitalAddress}</p>` : ""}
+                </div>
               </div>
               <div class="badge">Admission Copy</div>
             </div>
@@ -132,7 +151,7 @@ export default function ReceptionAdmissionsPage() {
                   </tbody>
                 </table>
 
-                <div class="cost">Admission Cost: ${receipt.admission_cost}</div>
+                <div class="cost">Admission Price: PKR ${Number(receipt.admission_cost || 0).toFixed(2)}</div>
               </div>
 
               <div class="foot">This is a computer-generated admission receipt from MedX.</div>
@@ -176,19 +195,27 @@ export default function ReceptionAdmissionsPage() {
   };
 
   return (
-    <>
-      <RoleDashboardShell
+    <ReceptionWorkspaceLayout
         title="Reception Admissions"
         subtitle="Enter admitted patient details and admission cost."
-        cards={[
-          { title: "Admissions", text: String(admissions.length) },
-          { title: "Ward Capture", text: "Bed and ward assignment" },
-          { title: "Receipt", text: "Printable admission receipt" },
-        ]}
-      />
+    >
+      <section>
+        <div className="mb-4 grid gap-4 md:grid-cols-3">
+          <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+            <p className="text-xs font-bold uppercase tracking-[0.12em] text-slate-500">Admissions</p>
+            <p className="mt-1 text-2xl font-black text-slate-900">{admissions.length}</p>
+          </div>
+          <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+            <p className="text-xs font-bold uppercase tracking-[0.12em] text-slate-500">Ward Capture</p>
+            <p className="mt-1 text-sm text-slate-600">Bed and ward assignment.</p>
+          </div>
+          <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+            <p className="text-xs font-bold uppercase tracking-[0.12em] text-slate-500">Receipt</p>
+            <p className="mt-1 text-sm text-slate-600">Printable admission receipt.</p>
+          </div>
+        </div>
 
-      <section className="px-4 pb-10 sm:px-6 lg:px-8 -mt-2">
-        <div className="mx-auto max-w-7xl grid gap-5 lg:grid-cols-2">
+        <div className="grid gap-5 lg:grid-cols-2">
           <article className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
             <h3 className="text-lg font-bold mb-3">Admit Patient</h3>
             {error ? <p className="mb-3 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">{error}</p> : null}
@@ -213,7 +240,7 @@ export default function ReceptionAdmissionsPage() {
 
               <Input label="Ward Name" name="ward_name" value={form.ward_name} onChange={onChange} />
               <Input label="Bed Number (Optional)" name="bed_number" value={form.bed_number} onChange={onChange} placeholder="Auto if empty" />
-              <Input label="Admission Cost" name="admission_cost" value={form.admission_cost} onChange={onChange} type="number" min="0" required />
+              <Input label="Admission Price (PKR)" name="admission_cost" value={form.admission_cost} onChange={onChange} type="number" min="0" step="0.01" required />
 
               <label className="block space-y-1">
                 <span className="text-xs font-bold uppercase tracking-[0.12em] text-slate-500">Details</span>
@@ -266,7 +293,7 @@ export default function ReceptionAdmissionsPage() {
                     <tr key={a.admission_id} className="border-t border-slate-100">
                       <td className="py-2 pr-3">{a.patient_name}</td>
                       <td className="py-2 pr-3">{a.ward_name || "-"} / {a.bed_number || "-"}</td>
-                      <td className="py-2 pr-3">{a.admission_cost}</td>
+                      <td className="py-2 pr-3">PKR {Number(a.admission_cost || 0).toFixed(2)}</td>
                       <td className="py-2 pr-3">{a.status}</td>
                     </tr>
                   ))}
@@ -276,7 +303,7 @@ export default function ReceptionAdmissionsPage() {
           </article>
         </div>
       </section>
-    </>
+    </ReceptionWorkspaceLayout>
   );
 }
 

@@ -21,7 +21,10 @@ export default function StaffPatients() {
         api.get("/patients/"),
       ]);
 
-      setStaff(staffRes.data?.items || []);
+      const visibleStaff = (staffRes.data?.items || []).filter(
+        (member) => String(member.role || "").toUpperCase() !== "SUPER_ADMIN"
+      );
+      setStaff(visibleStaff);
       setPatients(patientRes.data?.items || []);
     } catch (err) {
       console.error("Data fetch failed");
@@ -36,17 +39,22 @@ export default function StaffPatients() {
 
   const listToDisplay = activeTab === "staff" ? staff : patients;
   const filteredList = listToDisplay.filter((item) =>
-    item.full_name?.toLowerCase().includes(searchQuery.toLowerCase())
+    item.full_name?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+    item.role?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+    item.patient_mrn?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+    item.phone_number?.toLowerCase().includes(searchQuery.toLowerCase())
   );
 
   const getBadgeStyle = (role) => {
     if (activeTab === "patients") return "bg-blue-50 text-blue-600 border-blue-100";
     const styles = {
-      Doctor: "bg-purple-50 text-purple-700 border-purple-100",
-      Admin: "bg-slate-900 text-white border-slate-800",
-      Receptionist: "bg-teal-50 text-teal-700 border-teal-100",
+      DOCTOR: "bg-purple-50 text-purple-700 border-purple-100",
+      ADMIN: "bg-slate-900 text-white border-slate-800",
+      RECEPTIONIST: "bg-teal-50 text-teal-700 border-teal-100",
+      RADIOLOGIST: "bg-indigo-50 text-indigo-700 border-indigo-100",
+      ACCOUNTANT: "bg-amber-50 text-amber-700 border-amber-100",
     };
-    return styles[role] || "bg-slate-50 text-slate-600 border-slate-100";
+    return styles[String(role || "").toUpperCase()] || "bg-slate-50 text-slate-600 border-slate-100";
   };
 
   const getHistoryLink = (item) => {

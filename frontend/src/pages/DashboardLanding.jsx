@@ -13,7 +13,10 @@ export default function DashboardLanding() {
       RECEPTIONIST: "/dashboard/reception",
       PHARMACY: "/dashboard/pharmacy",
       LAB: "/dashboard/lab",
-      FINANCE: "/dashboard/finance",
+      RADIOLOGIST: "/dashboard/radiology",
+      ACCOUNTANT: "/dashboard/finance",
+      FLEET: "/dashboard/fleet",
+      FINANCE: "/dashboard/account",
       OPERATIONS: "/dashboard/operations",
       PATIENT: "/dashboard/patient",
     };

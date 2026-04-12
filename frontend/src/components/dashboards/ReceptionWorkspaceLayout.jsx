@@ -1,21 +1,17 @@
 import { Link, NavLink, useNavigate } from "react-router-dom";
-import { Stethoscope, ClipboardPlus, FlaskConical, LogOut, KeyRound, Activity, Users, ScanLine, FileImage, FileText } from "lucide-react";
+import { ClipboardList, CreditCard, KeyRound, LogOut, UserPlus2, Users } from "lucide-react";
 import { clearSession, getSessionUser } from "../../lib/auth";
 import { useHospitalSettings } from "../../context/HospitalSettingsContext";
 
 const links = [
-  { to: "/dashboard/doctor", label: "Overview", icon: Stethoscope },
-  { to: "/dashboard/doctor/medications", label: "Medications", icon: ClipboardPlus },
-  { to: "/dashboard/doctor/clinical", label: "Diagnosis / Procedure", icon: FlaskConical },
-  { to: "/dashboard/doctor/symptoms", label: "Symptoms AI", icon: Activity },
-  { to: "/dashboard/doctor/ai-imaging-lab", label: "AI Imaging Lab", icon: ScanLine },
-  { to: "/dashboard/doctor/imaging-reports", label: "Imaging Reports", icon: FileImage },
-  { to: "/dashboard/doctor/lab-reports", label: "Lab Reports", icon: FileText },
-  { to: "/dashboard/doctor/patients", label: "My Patients", icon: Users },
+  { to: "/dashboard/reception", label: "Overview", icon: ClipboardList },
+  { to: "/dashboard/reception/patients", label: "Patient Intake", icon: UserPlus2 },
+  { to: "/dashboard/reception/admissions", label: "Admissions", icon: Users },
+  { to: "/dashboard/reception/radiology-billing", label: "Radiology Billing", icon: CreditCard },
   { to: "/dashboard/account", label: "Account", icon: KeyRound },
 ];
 
-export default function DoctorWorkspaceLayout({ title, subtitle, children }) {
+export default function ReceptionWorkspaceLayout({ title, subtitle, children }) {
   const navigate = useNavigate();
   const user = getSessionUser();
   const { hospitalName } = useHospitalSettings();
@@ -28,10 +24,10 @@ export default function DoctorWorkspaceLayout({ title, subtitle, children }) {
   return (
     <div className="min-h-screen bg-slate-100 text-slate-900">
       <div className="flex min-h-screen">
-        <aside className="w-72 bg-slate-900 text-white p-6 hidden md:flex md:flex-col">
-          <Link to="/dashboard/doctor" className="mb-8 block">
-            <p className="text-xs uppercase tracking-[0.2em] text-cyan-300">MedX Doctor</p>
-            <p className="text-2xl font-extrabold mt-1">Workspace</p>
+        <aside className="hidden w-72 bg-slate-900 p-6 text-white md:flex md:flex-col">
+          <Link to="/dashboard/reception" className="mb-8 block">
+            <p className="text-xs uppercase tracking-[0.2em] text-teal-300">MedX Reception</p>
+            <p className="mt-1 text-2xl font-extrabold">Front Desk</p>
           </Link>
 
           <nav className="space-y-2 flex-1">
@@ -41,10 +37,10 @@ export default function DoctorWorkspaceLayout({ title, subtitle, children }) {
                 <NavLink
                   key={item.to}
                   to={item.to}
-                  end={item.to === "/dashboard/doctor"}
+                  end={item.to === "/dashboard/reception"}
                   className={({ isActive }) =>
                     `flex items-center gap-3 rounded-xl px-4 py-3 text-sm font-semibold transition ${
-                      isActive ? "bg-cyan-600 text-white" : "text-slate-300 hover:bg-slate-800 hover:text-white"
+                      isActive ? "bg-teal-600 text-white" : "text-slate-300 hover:bg-slate-800 hover:text-white"
                     }`
                   }
                 >
@@ -72,7 +68,7 @@ export default function DoctorWorkspaceLayout({ title, subtitle, children }) {
             </div>
             <div className="text-right">
               <p className="text-xs uppercase tracking-[0.14em] text-slate-500">Hospital</p>
-              <p className="text-sm font-semibold text-cyan-700">{hospitalName || user?.hospital_name || "MedX"}</p>
+              <p className="text-sm font-semibold text-teal-700">{hospitalName || user?.hospital_name || "MedX"}</p>
             </div>
           </header>
 

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { api } from "../../lib/api";
-import RoleDashboardShell from "../../components/dashboards/RoleDashboardShell";
+import ReceptionWorkspaceLayout from "../../components/dashboards/ReceptionWorkspaceLayout";
 
 export default function ReceptionPatientsPage() {
   const [patients, setPatients] = useState([]);
@@ -19,13 +19,20 @@ export default function ReceptionPatientsPage() {
     gender: "",
     phone_number: "",
     visit_type: "OPD",
+    service_fee: "",
+    procedure_tag: "Patient Registration",
     chief_complaint: "",
   });
 
   const fetchPatients = async () => {
     try {
-      const res = await api.get("/patients/", { params: { limit: 200 } });
-      setPatients(res.data.items || []);
+      const [patientsRes, settingsRes] = await Promise.all([
+        api.get("/patients/", { params: { limit: 200 } }),
+        api.get("/settings").catch(() => ({ data: {} })),
+      ]);
+      setPatients(patientsRes.data.items || []);
+      const defaultFee = Number(settingsRes?.data?.service_pricing?.patient_registration_fee || 0);
+      setForm((prev) => (prev.service_fee === "" ? { ...prev, service_fee: String(defaultFee) } : prev));
     } catch (err) {
       setError(err?.response?.data?.detail || "Unable to load patients");
     } finally {
@@ -59,8 +66,19 @@ export default function ReceptionPatientsPage() {
     }
   };
 
-  const printReceipt = () => {
+  const printReceipt = async () => {
     if (!receiptData) return;
+    let settingsMeta = {};
+    try {
+      const { data } = await api.get("/settings");
+      settingsMeta = data?.hospital_metadata || {};
+    } catch {
+      settingsMeta = {};
+    }
+
+    const hospitalName = settingsMeta.hospital_name || receiptData?.receipt?.hospital_name || "MedX Hospital";
+    const hospitalAddress = settingsMeta.address || receiptData?.receipt?.hospital_address || "-";
+    const hospitalLogo = settingsMeta.logo_url || receiptData?.receipt?.hospital_logo_url || "";
     const popup = window.open("", "_blank", "width=900,height=900");
     if (!popup) return;
 
@@ -76,6 +94,7 @@ export default function ReceptionPatientsPage() {
             .topbar { background: linear-gradient(120deg, #0f172a, #0e7490); color: #fff; padding: 18px 22px; display: flex; justify-content: space-between; align-items: center; }
             .brand h1 { margin: 0; font-size: 20px; letter-spacing: 0.02em; }
             .brand p { margin: 4px 0 0; font-size: 12px; opacity: 0.9; }
+            .logo { width:40px; height:40px; border-radius:999px; background:#ffffff; border:1px solid rgba(255,255,255,0.3); object-fit:cover; }
             .badge { background: rgba(255,255,255,0.18); border: 1px solid rgba(255,255,255,0.35); border-radius: 999px; padding: 6px 12px; font-size: 11px; font-weight: 700; }
             .body { padding: 20px 22px; }
             .meta { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin-bottom: 14px; }
@@ -95,9 +114,11 @@ export default function ReceptionPatientsPage() {
           <div class="sheet">
             <div class="topbar">
               <div class="brand">
-                <h1>MedX Patient Registration Receipt</h1>
-                <p>Reception Desk Copy</p>
+                <h1>${hospitalName}</h1>
+                <p>${hospitalAddress}</p>
+                <p>Patient Registration Receipt</p>
               </div>
+              ${hospitalLogo ? `<img src="${hospitalLogo}" alt="Hospital Logo" class="logo" />` : ""}
               <div class="badge">Official Receipt</div>
             </div>
 
@@ -124,6 +145,11 @@ export default function ReceptionPatientsPage() {
                   <div class="key">Patient MRN</div><div>${receiptData.receipt.patient_mrn}</div>
                   <div class="key">Patient ID</div><div>${receiptData.receipt.patient_id}</div>
                   <div class="key">Visit Type</div><div>${receiptData.receipt.visit_type || "OPD"}</div>
+                  <div class="key">Service Type</div><div>${receiptData.receipt.service_type || "PATIENT_REGISTRATION"}</div>
+                  <div class="key">Procedure Tag</div><div>${receiptData.receipt.procedure_tag || "-"}</div>
+                  <div class="key">Service Fee</div><div>PKR ${Number(receiptData.receipt.service_fee || 0).toFixed(2)}</div>
+                  <div class="key">Invoice Number</div><div>${receiptData.receipt.invoice_number || "-"}</div>
+                  <div class="key">Billing Status</div><div>${receiptData.receipt.billing_status || "-"}</div>
                   <div class="key">Chief Complaint</div><div>${receiptData.receipt.chief_complaint || "-"}</div>
                 </div>
               </div>
@@ -164,12 +190,14 @@ export default function ReceptionPatientsPage() {
         gender: form.gender || null,
         phone_number: form.phone_number || null,
         visit_type: form.visit_type || "OPD",
+        service_fee: Number(form.service_fee || 0),
+        procedure_tag: form.procedure_tag || "Patient Registration",
         chief_complaint: form.chief_complaint || null,
       });
 
       setReceiptData(res.data);
       setSuccess("Patient added and portal credentials generated.");
-      setForm({ full_name: "", patient_mrn: "", dob: "", gender: "", phone_number: "", visit_type: "OPD", chief_complaint: "" });
+      setForm((p) => ({ ...p, full_name: "", patient_mrn: "", dob: "", gender: "", phone_number: "", visit_type: "OPD", procedure_tag: "Patient Registration", chief_complaint: "" }));
       await fetchPatients();
     } catch (err) {
       setError(err?.response?.data?.detail || "Unable to add patient");
@@ -179,19 +207,27 @@ export default function ReceptionPatientsPage() {
   };
 
   return (
-    <>
-      <RoleDashboardShell
+    <ReceptionWorkspaceLayout
         title="Reception Patient Intake"
         subtitle="Register patient and auto-generate portal credentials."
-        cards={[
-          { title: "Total Patients", text: String(patients.length) },
-          { title: "Portal Account", text: "Auto email + password" },
-          { title: "Receipt", text: "Printable after registration" },
-        ]}
-      />
+    >
+      <section>
+        <div className="mb-4 grid gap-4 md:grid-cols-3">
+          <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+            <p className="text-xs font-bold uppercase tracking-[0.12em] text-slate-500">Total Patients</p>
+            <p className="mt-1 text-2xl font-black text-slate-900">{patients.length}</p>
+          </div>
+          <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+            <p className="text-xs font-bold uppercase tracking-[0.12em] text-slate-500">Portal Account</p>
+            <p className="mt-1 text-sm text-slate-600">Auto email + temporary password.</p>
+          </div>
+          <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+            <p className="text-xs font-bold uppercase tracking-[0.12em] text-slate-500">Receipt</p>
+            <p className="mt-1 text-sm text-slate-600">Includes procedure tag and billing details.</p>
+          </div>
+        </div>
 
-      <section className="px-4 pb-10 sm:px-6 lg:px-8 -mt-2">
-        <div className="mx-auto max-w-7xl grid gap-5 lg:grid-cols-2">
+        <div className="grid gap-5 lg:grid-cols-2">
           <article className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
             <h3 className="text-lg font-bold mb-3">Add Patient + Portal</h3>
             {error ? <p className="mb-3 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">{error}</p> : null}
@@ -234,6 +270,9 @@ export default function ReceptionPatientsPage() {
                 </select>
               </label>
 
+              <Input label="Price (PKR)" name="service_fee" value={form.service_fee} onChange={onChange} type="number" min="0" step="0.01" />
+              <Input label="Procedure Tag" name="procedure_tag" value={form.procedure_tag} onChange={onChange} placeholder="Patient Registration" />
+
               <label className="block space-y-1">
                 <span className="text-xs font-bold uppercase tracking-[0.12em] text-slate-500">Chief Complaint</span>
                 <textarea
@@ -271,6 +310,10 @@ export default function ReceptionPatientsPage() {
                 <p><strong>Portal Email:</strong> {receiptData.portal_credentials.email}</p>
                 <p><strong>Temporary Password:</strong> {receiptData.portal_credentials.temporary_password}</p>
                 <p><strong>Visit Type:</strong> {receiptData.receipt.visit_type || "OPD"}</p>
+                <p><strong>Procedure Tag:</strong> {receiptData.receipt.procedure_tag || "-"}</p>
+                <p><strong>Service Fee:</strong> PKR {Number(receiptData.receipt.service_fee || 0).toFixed(2)}</p>
+                <p><strong>Invoice:</strong> {receiptData.receipt.invoice_number || "-"}</p>
+                <p><strong>Billing Status:</strong> {receiptData.receipt.billing_status || "-"}</p>
                 <p><strong>Chief Complaint:</strong> {receiptData.receipt.chief_complaint || "-"}</p>
               </div>
             ) : null}
@@ -306,7 +349,7 @@ export default function ReceptionPatientsPage() {
           </article>
         </div>
       </section>
-    </>
+    </ReceptionWorkspaceLayout>
   );
 }
 

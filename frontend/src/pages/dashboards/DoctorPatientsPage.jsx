@@ -88,7 +88,9 @@ export default function DoctorPatientsPage() {
   const medications = history.medications || [];
   const clinicalUpdates = history.clinical_updates || [];
   const labRequests = history.lab_requests || [];
+  const imagingRecords = history.imaging_records || [];
   const aiDiagnoses = history.ai_diagnoses || [];
+  const vitals = history.vitals || [];
   const visitLogs = history.visit_logs || [];
 
   const latestVisit = visitLogs.length ? visitLogs[0] : null;
@@ -149,7 +151,20 @@ export default function DoctorPatientsPage() {
                 <Stat label="Patient" value={historyData.patient.full_name || "-"} />
                 <Stat label="MRN" value={historyData.patient.patient_mrn || "-"} />
                 <Stat label="Current Status" value={patientStatus} />
-                <Stat label="Total Records" value={String(admissions.length + appointments.length + medications.length + clinicalUpdates.length + visitLogs.length)} />
+                <Stat
+                  label="Total Records"
+                  value={String(
+                    admissions.length +
+                    appointments.length +
+                    medications.length +
+                    clinicalUpdates.length +
+                    visitLogs.length +
+                    labRequests.length +
+                    imagingRecords.length +
+                    aiDiagnoses.length +
+                    vitals.length
+                  )}
+                />
               </div>
             ) : null}
           </div>
@@ -160,7 +175,9 @@ export default function DoctorPatientsPage() {
             <HistoryCard title="Admissions" items={admissions} fields={["admission_date", "status", "bed_id", "admitted_by_staff_id"]} />
             <HistoryCard title="OPD Appointments" items={appointments} fields={["appointment_datetime", "status", "doctor_id", "reason"]} />
             <HistoryCard title="Lab Requests" items={labRequests} fields={["test_name", "status", "ordered_by_staff_id", "created_at"]} />
+            <HistoryCard title="Imaging Records" items={imagingRecords} fields={["study_title", "modality", "body_part", "status", "created_at"]} />
             <HistoryCard title="AI Diagnoses" items={aiDiagnoses} fields={["diagnosis_text", "confidence_score", "model_name", "created_at"]} />
+            <HistoryCard title="Nursing Vitals" items={vitals} fields={["blood_pressure_systolic", "blood_pressure_diastolic", "pulse_rate", "body_temperature", "respiratory_rate", "oxygen_saturation", "weight_kg", "bmi", "chief_complaint", "recorded_at"]} />
             <HistoryCard title="Reception Visit Logs" items={visitLogs} fields={["visit_type", "chief_complaint", "status", "created_at"]} />
           </div>
         </section>

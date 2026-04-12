@@ -7,6 +7,7 @@ const navLinks = [
   { to: "/pricing", label: "Pricing" },
   { to: "/contact", label: "MedX Contact" },
   { to: "/hospital-contacts", label: "Hospitals" },
+  { to: "/book-appointment", label: "Book Appointment" },
 ];
 
 export default function Navbar() {
@@ -35,7 +36,7 @@ export default function Navbar() {
             );
           })}
           <Link to="/login" className="inline-flex items-center gap-2 rounded-full bg-slate-900 px-5 py-2.5 text-sm font-semibold text-white transition hover:bg-cyan-700">
-            Staff Sign In <ArrowRight className="h-4 w-4" />
+            Log In <ArrowRight className="h-4 w-4" />
           </Link>
         </div>
       </div>

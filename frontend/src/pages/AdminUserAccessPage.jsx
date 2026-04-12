@@ -2,11 +2,28 @@ import { useEffect, useState } from "react";
 import Sidebar from "../components/Sidebar";
 import { api } from "../lib/api";
 
+function isMedxSuperAdmin(row) {
+  const role = String(row?.role || row?.role_name || "").toUpperCase();
+  const email = String(row?.email || "").toLowerCase();
+  const name = String(row?.full_name || "").toLowerCase();
+  return role === "SUPER_ADMIN" || email === "superadmin@medx.local" || name.includes("medx super admin");
+}
+
+function formatAccessAction(actionType) {
+  const key = String(actionType || "").toUpperCase();
+  if (key === "FORCE_LOGOUT") return "FORCE LOGOUT";
+  if (key === "BLOCK_PERMANENT") return "BLOCK PERMANENT";
+  if (key === "UNBLOCK") return "UNBLOCK";
+  if (key.startsWith("UNBLOCK_")) return key.replaceAll("_", " ");
+  return key || "-";
+}
+
 export default function AdminUserAccessPage() {
   const [staff, setStaff] = useState([]);
   const [blocked, setBlocked] = useState([]);
   const [events, setEvents] = useState([]);
   const [status, setStatus] = useState("");
+  const [busyUserId, setBusyUserId] = useState(null);
 
   const load = async () => {
     try {
@@ -15,9 +32,22 @@ export default function AdminUserAccessPage() {
         api.get("/admin/users/blocked"),
         api.get("/admin/users/access-events"),
       ]);
-      setStaff(staffRes.data?.items || []);
-      setBlocked(blockedRes.data?.items || []);
-      setEvents(eventRes.data?.items || []);
+      const staffItems = staffRes.data?.items || [];
+      const blockedItems = blockedRes.data?.items || [];
+      const hiddenUserIds = new Set(
+        [...staffItems, ...blockedItems]
+          .filter((item) => isMedxSuperAdmin(item))
+          .map((item) => item.user_id)
+          .filter((id) => !!id)
+      );
+
+      setStaff(staffItems.filter((item) => !isMedxSuperAdmin(item) && !hiddenUserIds.has(item.user_id)));
+      setBlocked(blockedItems.filter((item) => !isMedxSuperAdmin(item) && !hiddenUserIds.has(item.user_id)));
+      setEvents(
+        (eventRes.data?.items || []).filter(
+          (item) => !hiddenUserIds.has(item.target_user_id) && !hiddenUserIds.has(item.actor_user_id)
+        )
+      );
     } catch (err) {
       setStatus(err?.response?.data?.detail || "Unable to load user access control data");
     }
@@ -28,21 +58,36 @@ export default function AdminUserAccessPage() {
   }, []);
 
   const forceLogout = async (userId) => {
-    await api.post(`/admin/users/${userId}/force-logout`, { reason: "Admin manual logout" });
-    setStatus(`User ${userId} logged out.`);
-    await load();
+    setBusyUserId(userId);
+    try {
+      await api.post(`/admin/users/${userId}/force-logout`, { reason: "Admin manual logout" });
+      setStatus(`User ${userId} logged out.`);
+      await load();
+    } finally {
+      setBusyUserId(null);
+    }
   };
 
   const blockUser = async (userId) => {
-    await api.post(`/admin/users/${userId}/block-permanent`, { reason: "Admin permanent block" });
-    setStatus(`User ${userId} blocked.`);
-    await load();
+    setBusyUserId(userId);
+    try {
+      await api.post(`/admin/users/${userId}/block-permanent`, { reason: "Admin permanent block" });
+      setStatus(`User ${userId} blocked.`);
+      await load();
+    } finally {
+      setBusyUserId(null);
+    }
   };
 
   const unblockUser = async (userId) => {
-    await api.post(`/admin/users/${userId}/unblock`, { reason: "Admin unblock" });
-    setStatus(`User ${userId} unblocked.`);
-    await load();
+    setBusyUserId(userId);
+    try {
+      await api.post(`/admin/users/${userId}/unblock`, { reason: "Admin unblock" });
+      setStatus(`User ${userId} unblocked.`);
+      await load();
+    } finally {
+      setBusyUserId(null);
+    }
   };
 
   return (
@@ -68,8 +113,20 @@ export default function AdminUserAccessPage() {
                   <td>
                     {s.user_id ? (
                       <div className="flex gap-2">
-                        <button onClick={() => forceLogout(s.user_id)} className="rounded border px-2 py-1">Logout</button>
-                        <button onClick={() => blockUser(s.user_id)} className="rounded border px-2 py-1 text-rose-700">Block Permanent</button>
+                        <button
+                          onClick={() => forceLogout(s.user_id)}
+                          disabled={busyUserId === s.user_id}
+                          className="rounded border px-2 py-1 disabled:opacity-60"
+                        >
+                          Logout
+                        </button>
+                        <button
+                          onClick={() => blockUser(s.user_id)}
+                          disabled={busyUserId === s.user_id}
+                          className="rounded border px-2 py-1 text-rose-700 disabled:opacity-60"
+                        >
+                          Block Permanent
+                        </button>
                       </div>
                     ) : "-"}
                   </td>
@@ -84,12 +141,24 @@ export default function AdminUserAccessPage() {
           <table className="w-full text-sm">
             <thead><tr className="text-left text-slate-500"><th>User ID</th><th>Email</th><th>Status</th><th>Action</th></tr></thead>
             <tbody>
-              {blocked.map((b) => (
+              {blocked.length === 0 ? (
+                <tr className="border-t">
+                  <td className="py-3 text-slate-500" colSpan={4}>No blocked users in this hospital.</td>
+                </tr>
+              ) : blocked.map((b) => (
                 <tr key={`${b.user_id}-${b.hospital_id}`} className="border-t">
                   <td className="py-2">{b.user_id}</td>
                   <td>{b.email}</td>
                   <td>{b.is_active === 0 ? "BLOCKED" : "ACTIVE"}</td>
-                  <td><button onClick={() => unblockUser(b.user_id)} className="rounded border px-2 py-1">Unblock</button></td>
+                  <td>
+                    <button
+                      onClick={() => unblockUser(b.user_id)}
+                      disabled={busyUserId === b.user_id}
+                      className="rounded border px-2 py-1 disabled:opacity-60"
+                    >
+                      Unblock User
+                    </button>
+                  </td>
                 </tr>
               ))}
             </tbody>
@@ -99,13 +168,32 @@ export default function AdminUserAccessPage() {
         <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm overflow-auto">
           <h2 className="text-xl font-bold mb-3">Access Action History</h2>
           <table className="w-full text-sm">
-            <thead><tr className="text-left text-slate-500"><th>When</th><th>Action</th><th>Target User</th><th>Reason</th></tr></thead>
+            <thead>
+              <tr className="text-left text-slate-500">
+                <th>When</th>
+                <th>Action</th>
+                <th>Logged Out / Target User</th>
+                <th>Performed By</th>
+                <th>Reason</th>
+              </tr>
+            </thead>
             <tbody>
-              {events.map((e) => (
+              {events.length === 0 ? (
+                <tr className="border-t">
+                  <td className="py-3 text-slate-500" colSpan={5}>No access actions recorded yet.</td>
+                </tr>
+              ) : events.map((e) => (
                 <tr key={e.action_id} className="border-t">
                   <td className="py-2">{e.created_at}</td>
-                  <td>{e.action_type}</td>
-                  <td>{e.target_user_id}</td>
+                  <td>{formatAccessAction(e.action_type)}</td>
+                  <td>
+                    <p className="font-medium text-slate-800">{e.target_email || "-"}</p>
+                    <p className="text-xs text-slate-500">User ID: {e.target_user_id || "-"}</p>
+                  </td>
+                  <td>
+                    <p className="font-medium text-slate-800">{e.actor_email || "-"}</p>
+                    <p className="text-xs text-slate-500">User ID: {e.actor_user_id || "-"}</p>
+                  </td>
                   <td>{e.reason || "-"}</td>
                 </tr>
               ))}

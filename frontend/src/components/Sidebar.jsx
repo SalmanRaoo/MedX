@@ -7,11 +7,23 @@ import {
   ShieldCheck,
   KeyRound,
   UserX,
+  CircleDollarSign,
+  Truck,
+  Building2,
 } from "lucide-react";
 
 export default function Sidebar() {
   const location = useLocation();
   const navigate = useNavigate();
+  const role = (() => {
+    try {
+      return String(JSON.parse(localStorage.getItem("medx_user") || "{}")?.role_name || "").toUpperCase();
+    } catch {
+      return "";
+    }
+  })();
+  const canAccessAccounts = role === "SUPER_ADMIN" || role === "ACCOUNTANT";
+  const canAccessOperations = role === "SUPER_ADMIN" || role === "ADMIN" || role === "OPERATIONS";
 
   const handleLogout = () => {
     localStorage.removeItem("medx_token");
@@ -41,6 +53,15 @@ export default function Sidebar() {
         <SidebarLink to="/dashboard/admin" icon={<LayoutDashboard className="h-5 w-5" />} label="Admin Overview" activeClass={isActive("/dashboard/admin")} />
         <SidebarLink to="/dashboard/staff-patients" icon={<Users className="h-5 w-5" />} label="Staff & Patients" activeClass={isActive("/dashboard/staff-patients")} />
         <SidebarLink to="/dashboard/user-access" icon={<UserX className="h-5 w-5" />} label="User Access" activeClass={isActive("/dashboard/user-access")} />
+        {canAccessAccounts ? (
+          <>
+            <SidebarLink to="/dashboard/finance" icon={<CircleDollarSign className="h-5 w-5" />} label="Accounts" activeClass={isActive("/dashboard/finance")} />
+            <SidebarLink to="/dashboard/fleet" icon={<Truck className="h-5 w-5" />} label="Fleet" activeClass={isActive("/dashboard/fleet")} />
+          </>
+        ) : null}
+        {canAccessOperations ? (
+          <SidebarLink to="/dashboard/operations" icon={<Building2 className="h-5 w-5" />} label="Operations" activeClass={isActive("/dashboard/operations")} />
+        ) : null}
 
         <div className="pt-8 px-4 text-[10px] font-black text-slate-500 uppercase tracking-[0.2em] mb-4">Infrastructure</div>
         <SidebarLink to="/dashboard/settings" icon={<Settings className="h-5 w-5" />} label="System Settings" activeClass={isActive("/dashboard/settings")} />

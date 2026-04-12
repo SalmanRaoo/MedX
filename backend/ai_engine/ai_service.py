@@ -5,6 +5,11 @@ import joblib
 import numpy as np
 import os
 import io
+import warnings
+try:
+    import pandas as pd
+except Exception:
+    pd = None
 # from PIL import Image # Uncomment if you have pillow installed for images
 
 app = FastAPI(title="MedX Intelligent AI Service")
@@ -53,6 +58,17 @@ if os.path.exists(cols_path):
     except Exception as e:
         print(f"   ? Failed to load disease_predictor_cols: {e}")
 
+if not disease_predictor_cols and "disease_predictor" in models:
+    try:
+        feature_names = getattr(models["disease_predictor"], "feature_names_in_", None)
+        if feature_names is not None:
+            if hasattr(feature_names, "tolist"):
+                feature_names = feature_names.tolist()
+            disease_predictor_cols = [str(c).strip().lower().replace(" ", "_") for c in feature_names if str(c).strip()]
+            print(f"   ? Fallback loaded disease_predictor_cols from model.feature_names_in_ ({len(disease_predictor_cols)} features)")
+    except Exception as e:
+        print(f"   ? Failed fallback for disease_predictor_cols: {e}")
+
 # ==========================================
 # 2. HELPER FUNCTIONS
 # ==========================================
@@ -66,12 +82,26 @@ def get_prediction(model_name, data):
     
     model = models[model_name]
     try:
+        shaped_input = [data]
+        feature_names = getattr(model, "feature_names_in_", None)
+        if pd is not None and feature_names is not None:
+            try:
+                cols = feature_names.tolist() if hasattr(feature_names, "tolist") else list(feature_names)
+                if len(cols) == len(data):
+                    shaped_input = pd.DataFrame([data], columns=cols)
+            except Exception:
+                shaped_input = [data]
+
         # Reshape for single prediction
-        prediction = model.predict([data])[0]
+        with warnings.catch_warnings():
+            warnings.filterwarnings("ignore", message="X does not have valid feature names*")
+            prediction = model.predict(shaped_input)[0]
         
         # Try to get probability if supported
         try:
-            proba = np.max(model.predict_proba([data]))
+            with warnings.catch_warnings():
+                warnings.filterwarnings("ignore", message="X does not have valid feature names*")
+                proba = np.max(model.predict_proba(shaped_input))
             confidence = f"{proba*100:.1f}%"
         except:
             confidence = "N/A" # Some models (like SVM) might not support proba
@@ -88,9 +118,26 @@ def get_prediction(model_name, data):
 @app.post("/predict/diabetes")
 def predict_diabetes(req: dict):
     # Inputs: pregnancies, glucose, bp, skin, insulin, bmi, dpf, age
+    glucose = req.get("glucose")
+    bp = req.get("bp")
+    insulin = req.get("insulin")
+    bmi = req.get("bmi")
+
+    if glucose is None or bp is None or insulin is None or bmi is None:
+        raise HTTPException(
+            status_code=400,
+            detail="glucose, bp, insulin, and bmi are required for diabetes prediction",
+        )
+
     data = [
-        req.get('pregnancies', 0), req['glucose'], req['bp'], req['skin'], 
-        req['insulin'], req['bmi'], req['dpf'], req['age']
+        req.get("pregnancies", 0),
+        glucose,
+        bp,
+        req.get("skin", 0),
+        insulin,
+        bmi,
+        req.get("dpf", 0),
+        req.get("age", 0),
     ]
     res, conf = get_prediction("diabetes_model", data)
     label = "Diabetic" if res == "1" else "Healthy"
@@ -99,14 +146,36 @@ def predict_diabetes(req: dict):
 # --- B. HEART DISEASE ---
 @app.post("/predict/heart")
 def predict_heart(req: dict):
-    # Standard 13 inputs
-    data = [
-        req['age'], req['sex'], req['cp'], req['trestbps'], req['chol'], 
-        req['fbs'], req['restecg'], req['thalach'], req['exang'], 
-        req['oldpeak'], req['slope'], req['ca'], req['thal']
+    # Preferred feature set (heart failure model)
+    current_fields = [
+        "age", "anaemia", "creatinine_phosphokinase", "diabetes",
+        "ejection_fraction", "high_blood_pressure", "platelets",
+        "serum_creatinine", "serum_sodium", "sex", "smoking", "time"
     ]
+    # Legacy feature set (old CAD form) kept for backward compatibility
+    legacy_fields = [
+        "age", "sex", "cp", "trestbps", "chol", "fbs", "restecg",
+        "thalach", "exang", "oldpeak", "slope", "ca", "thal"
+    ]
+
+    if all(k in req for k in current_fields):
+        data = [req[k] for k in current_fields]
+    elif all(k in req for k in legacy_fields):
+        data = [req[k] for k in legacy_fields]
+    else:
+        missing_current = [k for k in current_fields if k not in req]
+        missing_legacy = [k for k in legacy_fields if k not in req]
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Heart prediction payload mismatch. "
+                f"Missing current-set fields: {missing_current}. "
+                f"Missing legacy-set fields: {missing_legacy}."
+            ),
+        )
+
     res, conf = get_prediction("heart_model", data)
-    label = "Heart Disease Detected" if res == "1" else "Healthy"
+    label = "Heart Risk Detected" if str(res) in {"1", "True", "true", "positive"} else "Healthy"
     return {"result": label, "confidence": conf}
 
 # --- C. KIDNEY (WITH HYBRID EXPERT RULES) ---
@@ -295,6 +364,32 @@ if TF_AVAILABLE:
 # ==========================================
 # 4. REAL VISION ENDPOINTS (Deep Learning)
 # ==========================================
+def _prepare_vision_input(contents: bytes, model, default_hw: tuple[int, int]):
+    img = Image.open(io.BytesIO(contents))
+
+    expected_h, expected_w = default_hw
+    expected_channels = 3
+    input_shape = getattr(model, "input_shape", None)
+    if isinstance(input_shape, list) and input_shape:
+        input_shape = input_shape[0]
+    if isinstance(input_shape, tuple) and len(input_shape) >= 4:
+        h, w, c = input_shape[-3], input_shape[-2], input_shape[-1]
+        if isinstance(h, int) and h > 0:
+            expected_h = h
+        if isinstance(w, int) and w > 0:
+            expected_w = w
+        if isinstance(c, int) and c in (1, 3):
+            expected_channels = c
+
+    img_mode = "L" if expected_channels == 1 else "RGB"
+    img = img.convert(img_mode)
+    img = img.resize((expected_w, expected_h))
+
+    img_array = img_to_array(img) / 255.0
+    img_array = np.expand_dims(img_array, axis=0)
+    return img_array
+
+
 @app.post("/predict/pneumonia")
 async def predict_pneumonia(file: UploadFile = File(...)):
     if not TF_AVAILABLE or "pneumonia_model" not in vision_models:
@@ -302,13 +397,12 @@ async def predict_pneumonia(file: UploadFile = File(...)):
          
     contents = await file.read()
     model = vision_models["pneumonia_model"]
-    
-    # Secret Recipe from the author's code: Grayscale + 150x150
-    img = Image.open(io.BytesIO(contents)).convert('L') # 'L' is Grayscale
-    img = img.resize((150, 150))
-    
-    img_array = img_to_array(img) / 255.0
-    img_array = np.expand_dims(img_array, axis=0)
+
+    # Auto-match the loaded model input shape (channels + resolution).
+    try:
+        img_array = _prepare_vision_input(contents, model, default_hw=(150, 150))
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"Invalid image upload: {exc}")
     
     prediction = model.predict(img_array)[0][0]
     
@@ -325,13 +419,12 @@ async def predict_brain(file: UploadFile = File(...)):
          
     contents = await file.read()
     model = vision_models["brain_tumor_model"]
-    
-    # Secret Recipe from the author's code: RGB + 224x224
-    img = Image.open(io.BytesIO(contents)).convert('RGB')
-    img = img.resize((224, 224))
-    
-    img_array = img_to_array(img) / 255.0
-    img_array = np.expand_dims(img_array, axis=0)
+
+    # Auto-match the loaded model input shape (channels + resolution).
+    try:
+        img_array = _prepare_vision_input(contents, model, default_hw=(224, 224))
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"Invalid image upload: {exc}")
     
     # Predict (This outputs an array of 4 probabilities)
     predictions = model.predict(img_array)[0]

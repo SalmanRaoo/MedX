@@ -35,7 +35,7 @@ export default function SubscriptionOnboarding() {
     try {
       const res = await publicApi.post("/public/subscriptions/onboard-admin", form);
       setMessage(`Admin setup completed for ${res.data.hospital_name}. You can now login.`);
-      setTimeout(() => navigate("/login"), 1200);
+      setTimeout(() => navigate("/login/staff"), 1200);
     } catch (err) {
       setError(err?.response?.data?.detail || "Unable to complete admin onboarding");
     } finally {
@@ -65,7 +65,7 @@ export default function SubscriptionOnboarding() {
             <button disabled={loading || !canSubmit} className="rounded-xl bg-slate-900 px-5 py-3 text-white font-semibold hover:bg-cyan-700 disabled:opacity-70">
               {loading ? "Submitting..." : "Create Admin Account"}
             </button>
-            <Link to="/login" className="rounded-xl border px-5 py-3 text-sm font-semibold text-slate-700">Go to Login</Link>
+            <Link to="/login/staff" className="rounded-xl border px-5 py-3 text-sm font-semibold text-slate-700">Go to Login</Link>
           </div>
         </form>
       </div>

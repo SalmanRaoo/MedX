@@ -1,10 +1,12 @@
 import { Link, useNavigate } from "react-router-dom";
 import { LogOut, KeyRound } from "lucide-react";
 import { clearSession } from "../../lib/auth";
+import { useHospitalSettings } from "../../context/HospitalSettingsContext";
 
 export default function RoleDashboardShell({ title, subtitle, cards = [] }) {
   const user = JSON.parse(localStorage.getItem("medx_user") || "{}");
   const navigate = useNavigate();
+  const { hospitalName } = useHospitalSettings();
 
   const handleExit = () => {
     clearSession();
@@ -18,7 +20,7 @@ export default function RoleDashboardShell({ title, subtitle, cards = [] }) {
           <div>
             <h1 className="text-3xl font-extrabold tracking-tight">{title}</h1>
             <p className="text-slate-600 mt-1">{subtitle}</p>
-            <p className="text-xs mt-2 uppercase tracking-[0.14em] text-cyan-700">{user.hospital_name || "Hospital"}</p>
+            <p className="text-xs mt-2 uppercase tracking-[0.14em] text-cyan-700">{hospitalName || user.hospital_name || "Hospital"}</p>
           </div>
           <div className="flex gap-2">
             <Link to="/dashboard/account" className="rounded-lg border px-4 py-2 text-sm font-semibold text-slate-700 inline-flex items-center gap-2"><KeyRound className="h-4 w-4" />Account</Link>

@@ -176,6 +176,11 @@ CREATE TABLE IF NOT EXISTS prescription_items (
     dosage TEXT NOT NULL,
     instructions TEXT,
     duration_days INTEGER,
+    dispense_status TEXT NOT NULL DEFAULT 'PENDING',
+    dispensed_quantity INTEGER,
+    dispensed_at TEXT,
+    dispensed_by_staff_id INTEGER,
+    dispense_notes TEXT,
     UNIQUE (hospital_id, prescription_item_id),
     FOREIGN KEY (hospital_id) REFERENCES hospitals(hospital_id) ON DELETE CASCADE,
     FOREIGN KEY (hospital_id, prescription_id) REFERENCES prescriptions(hospital_id, prescription_id) ON DELETE CASCADE
@@ -189,7 +194,12 @@ CREATE TABLE IF NOT EXISTS patient_vitals (
     blood_pressure_systolic INTEGER,
     blood_pressure_diastolic INTEGER,
     pulse_rate INTEGER,
+    respiratory_rate REAL,
     oxygen_saturation REAL,
+    weight_kg REAL,
+    bmi REAL,
+    chief_complaint TEXT,
+    observation_notes TEXT,
     ai_risk_score REAL,
     recorded_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     recorded_by_staff_id INTEGER,
@@ -250,10 +260,58 @@ CREATE TABLE IF NOT EXISTS lab_requests (
     FOREIGN KEY (hospital_id, ordered_by_staff_id) REFERENCES staff(hospital_id, staff_id)
 );
 
+CREATE TABLE IF NOT EXISTS radiology_requests (
+    radiology_request_id INTEGER PRIMARY KEY,
+    hospital_id INTEGER NOT NULL,
+    patient_id INTEGER NOT NULL,
+    ordered_by_staff_id INTEGER,
+    test_name TEXT NOT NULL,
+    body_part TEXT,
+    priority TEXT NOT NULL DEFAULT 'ROUTINE',
+    status TEXT NOT NULL DEFAULT 'ORDERED',
+    notes TEXT,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE (hospital_id, radiology_request_id),
+    FOREIGN KEY (hospital_id) REFERENCES hospitals(hospital_id) ON DELETE CASCADE,
+    FOREIGN KEY (hospital_id, patient_id) REFERENCES patients(hospital_id, patient_id) ON DELETE CASCADE,
+    FOREIGN KEY (hospital_id, ordered_by_staff_id) REFERENCES staff(hospital_id, staff_id)
+);
+
+CREATE TABLE IF NOT EXISTS imaging_records (
+    imaging_record_id INTEGER PRIMARY KEY,
+    hospital_id INTEGER NOT NULL,
+    patient_id INTEGER NOT NULL,
+    patient_mrn_snapshot TEXT NOT NULL,
+    patient_name_snapshot TEXT,
+    modality TEXT NOT NULL,
+    body_part TEXT NOT NULL,
+    study_title TEXT,
+    source_page TEXT NOT NULL DEFAULT 'RADIOLOGY_DASHBOARD',
+    request_id INTEGER,
+    technician_notes TEXT,
+    doctor_notes TEXT,
+    ai_model_key TEXT,
+    ai_result TEXT,
+    ai_confidence TEXT,
+    ai_findings_json TEXT,
+    scan_image_data_url TEXT,
+    status TEXT NOT NULL DEFAULT 'DRAFT',
+    doctor_signature_name TEXT,
+    doctor_signature_at TEXT,
+    recorded_by_staff_id INTEGER,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE (hospital_id, imaging_record_id),
+    FOREIGN KEY (hospital_id) REFERENCES hospitals(hospital_id) ON DELETE CASCADE,
+    FOREIGN KEY (hospital_id, patient_id) REFERENCES patients(hospital_id, patient_id) ON DELETE CASCADE,
+    FOREIGN KEY (hospital_id, recorded_by_staff_id) REFERENCES staff(hospital_id, staff_id)
+);
+
 CREATE TABLE IF NOT EXISTS operation_theaters (
     ot_id INTEGER PRIMARY KEY,
     hospital_id INTEGER NOT NULL,
     room_number TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'AVAILABLE',
     hourly_charge REAL NOT NULL DEFAULT 0,
     is_active INTEGER NOT NULL DEFAULT 1,
     UNIQUE (hospital_id, ot_id),
@@ -319,13 +377,18 @@ CREATE TABLE IF NOT EXISTS ai_diagnoses (
 CREATE TABLE IF NOT EXISTS beds (
     bed_id INTEGER PRIMARY KEY,
     hospital_id INTEGER NOT NULL,
+    unit_type TEXT NOT NULL DEFAULT 'WARD',
     ward_name TEXT,
     bed_number TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'FREE',
     is_occupied INTEGER NOT NULL DEFAULT 0,
+    current_patient_id INTEGER,
     daily_charge REAL NOT NULL DEFAULT 0,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     UNIQUE (hospital_id, bed_id),
     UNIQUE (hospital_id, bed_number),
-    FOREIGN KEY (hospital_id) REFERENCES hospitals(hospital_id) ON DELETE CASCADE
+    FOREIGN KEY (hospital_id) REFERENCES hospitals(hospital_id) ON DELETE CASCADE,
+    FOREIGN KEY (hospital_id, current_patient_id) REFERENCES patients(hospital_id, patient_id)
 );
 
 CREATE TABLE IF NOT EXISTS admissions (
@@ -403,6 +466,30 @@ CREATE TABLE IF NOT EXISTS medicine_batches (
     FOREIGN KEY (hospital_id) REFERENCES hospitals(hospital_id) ON DELETE CASCADE,
     FOREIGN KEY (hospital_id, medicine_id) REFERENCES medicines(hospital_id, medicine_id) ON DELETE CASCADE
 );
+
+CREATE TABLE IF NOT EXISTS medicine_inventory (
+    inventory_id INTEGER PRIMARY KEY,
+    hospital_id INTEGER NOT NULL,
+    medicine_name TEXT NOT NULL,
+    generic_name TEXT,
+    batch_number TEXT NOT NULL,
+    expiry_date TEXT,
+    manufacturer TEXT,
+    unit_price REAL NOT NULL DEFAULT 0,
+    quantity_available INTEGER NOT NULL DEFAULT 0,
+    minimum_threshold INTEGER NOT NULL DEFAULT 50,
+    is_active INTEGER NOT NULL DEFAULT 1,
+    created_by_staff_id INTEGER,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE (hospital_id, inventory_id),
+    UNIQUE (hospital_id, batch_number),
+    FOREIGN KEY (hospital_id) REFERENCES hospitals(hospital_id) ON DELETE CASCADE,
+    FOREIGN KEY (hospital_id, created_by_staff_id) REFERENCES staff(hospital_id, staff_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_medicine_inventory_hospital_name ON medicine_inventory(hospital_id, medicine_name, is_active);
+CREATE INDEX IF NOT EXISTS idx_medicine_inventory_hospital_threshold ON medicine_inventory(hospital_id, quantity_available, minimum_threshold);
 
 CREATE TABLE IF NOT EXISTS pharmacy_sales (
     sale_id INTEGER PRIMARY KEY,
@@ -544,6 +631,22 @@ CREATE TABLE IF NOT EXISTS hospital_settings (
     FOREIGN KEY (hospital_id) REFERENCES hospitals(hospital_id) ON DELETE CASCADE
 );
 
+CREATE TABLE IF NOT EXISTS global_settings (
+    setting_id INTEGER PRIMARY KEY,
+    hospital_id INTEGER NOT NULL,
+    hospital_name TEXT,
+    address TEXT,
+    contact_number TEXT,
+    logo_url TEXT,
+    service_pricing_json TEXT NOT NULL DEFAULT '{}',
+    staff_fees_json TEXT NOT NULL DEFAULT '{}',
+    updated_by_user_id INTEGER,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE (hospital_id),
+    FOREIGN KEY (hospital_id) REFERENCES hospitals(hospital_id) ON DELETE CASCADE,
+    FOREIGN KEY (updated_by_user_id) REFERENCES users(user_id)
+);
+
 CREATE TABLE IF NOT EXISTS audit_logs (
     log_id INTEGER PRIMARY KEY,
     hospital_id INTEGER,
@@ -566,6 +669,8 @@ CREATE INDEX IF NOT EXISTS idx_staff_hospital ON staff(hospital_id);
 CREATE INDEX IF NOT EXISTS idx_patients_hospital ON patients(hospital_id);
 CREATE INDEX IF NOT EXISTS idx_appointments_hospital_date ON appointments(hospital_id, appointment_date);
 CREATE INDEX IF NOT EXISTS idx_lab_requests_hospital_status ON lab_requests(hospital_id, status);
+CREATE INDEX IF NOT EXISTS idx_radiology_requests_hospital_status ON radiology_requests(hospital_id, status);
+CREATE INDEX IF NOT EXISTS idx_imaging_records_hospital_status_time ON imaging_records(hospital_id, status, created_at);
 CREATE INDEX IF NOT EXISTS idx_admissions_hospital_status ON admissions(hospital_id, status);
 CREATE INDEX IF NOT EXISTS idx_invoices_hospital_status ON invoices(hospital_id, status);
 CREATE INDEX IF NOT EXISTS idx_audit_hospital_created ON audit_logs(hospital_id, created_at);
@@ -634,6 +739,11 @@ CREATE TABLE IF NOT EXISTS doctor_medications (
     duration_days INTEGER,
     instructions TEXT,
     pharmacy_status TEXT NOT NULL DEFAULT 'PENDING',
+    dispensed_quantity INTEGER,
+    dispensed_at TEXT,
+    dispensed_by_staff_id INTEGER,
+    dispense_notes TEXT,
+    dispense_invoice_id INTEGER,
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (hospital_id) REFERENCES hospitals(hospital_id) ON DELETE CASCADE,
     FOREIGN KEY (hospital_id, patient_id) REFERENCES patients(hospital_id, patient_id),
@@ -759,3 +869,225 @@ CREATE TABLE IF NOT EXISTS reception_patient_visits (
 );
 
 CREATE INDEX IF NOT EXISTS idx_reception_visits_hospital_patient_time ON reception_patient_visits(hospital_id, patient_id, created_at);
+
+-- ======================= EXTENSIONS: RECEPTION RADIOLOGY BILLING =======================
+CREATE TABLE IF NOT EXISTS radiology_service_catalog (
+    service_id INTEGER PRIMARY KEY,
+    hospital_id INTEGER NOT NULL,
+    modality TEXT NOT NULL,
+    scan_name TEXT NOT NULL,
+    body_part TEXT NOT NULL,
+    service_fee REAL NOT NULL DEFAULT 0,
+    is_active INTEGER NOT NULL DEFAULT 1,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE (hospital_id, service_id),
+    UNIQUE (hospital_id, modality, scan_name, body_part),
+    FOREIGN KEY (hospital_id) REFERENCES hospitals(hospital_id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_rad_service_catalog_hospital_modality ON radiology_service_catalog(hospital_id, modality, is_active);
+
+CREATE TABLE IF NOT EXISTS reception_radiology_billings (
+    billing_id INTEGER PRIMARY KEY,
+    hospital_id INTEGER NOT NULL,
+    patient_id INTEGER NOT NULL,
+    patient_mrn_snapshot TEXT NOT NULL,
+    service_id INTEGER NOT NULL,
+    radiology_request_id INTEGER NOT NULL,
+    invoice_id INTEGER NOT NULL,
+    procedure_tag TEXT,
+    amount_due REAL NOT NULL DEFAULT 0,
+    payment_status TEXT NOT NULL DEFAULT 'UNPAID',
+    created_by_staff_id INTEGER,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE (hospital_id, billing_id),
+    FOREIGN KEY (hospital_id) REFERENCES hospitals(hospital_id) ON DELETE CASCADE,
+    FOREIGN KEY (hospital_id, patient_id) REFERENCES patients(hospital_id, patient_id) ON DELETE CASCADE,
+    FOREIGN KEY (hospital_id, service_id) REFERENCES radiology_service_catalog(hospital_id, service_id),
+    FOREIGN KEY (hospital_id, radiology_request_id) REFERENCES radiology_requests(hospital_id, radiology_request_id),
+    FOREIGN KEY (hospital_id, invoice_id) REFERENCES invoices(hospital_id, invoice_id),
+    FOREIGN KEY (hospital_id, created_by_staff_id) REFERENCES staff(hospital_id, staff_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_reception_rad_billings_hospital_time ON reception_radiology_billings(hospital_id, created_at);
+
+-- ======================= EXTENSIONS: LAB RESULT ENTRIES (LIS) =======================
+CREATE TABLE IF NOT EXISTS lab_result_entries (
+    entry_id INTEGER PRIMARY KEY,
+    hospital_id INTEGER NOT NULL,
+    patient_id INTEGER NOT NULL,
+    collected_by_staff_id INTEGER,
+    collection_date TEXT,
+    panel_name TEXT NOT NULL DEFAULT 'GENERAL',
+    tests_json TEXT NOT NULL,
+    ai_outputs_json TEXT,
+    status TEXT NOT NULL DEFAULT 'DRAFT',
+    technician_signature TEXT,
+    finalized_at TEXT,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE (hospital_id, entry_id),
+    FOREIGN KEY (hospital_id) REFERENCES hospitals(hospital_id) ON DELETE CASCADE,
+    FOREIGN KEY (hospital_id, patient_id) REFERENCES patients(hospital_id, patient_id) ON DELETE CASCADE,
+    FOREIGN KEY (hospital_id, collected_by_staff_id) REFERENCES staff(hospital_id, staff_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_lab_result_entries_hospital_status_time ON lab_result_entries(hospital_id, status, created_at);
+
+-- ======================= EXTENSIONS: STRUCTURED LAB RECORDS =======================
+CREATE TABLE IF NOT EXISTS lab_records (
+    record_id INTEGER PRIMARY KEY,
+    hospital_id INTEGER NOT NULL,
+    patient_id INTEGER NOT NULL,
+    collected_by_staff_id INTEGER,
+    test_type TEXT NOT NULL,
+    department TEXT NOT NULL,
+    specimen_type TEXT NOT NULL,
+    collection_timestamp TEXT NOT NULL,
+    clinical_notes TEXT,
+    patient_full_name_snapshot TEXT,
+    patient_mrn_snapshot TEXT,
+    patient_gender_snapshot TEXT,
+    patient_age_snapshot INTEGER,
+    markers_json TEXT NOT NULL,
+    ai_outputs_json TEXT,
+    status TEXT NOT NULL DEFAULT 'COMPLETED',
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE (hospital_id, record_id),
+    FOREIGN KEY (hospital_id) REFERENCES hospitals(hospital_id) ON DELETE CASCADE,
+    FOREIGN KEY (hospital_id, patient_id) REFERENCES patients(hospital_id, patient_id) ON DELETE CASCADE,
+    FOREIGN KEY (hospital_id, collected_by_staff_id) REFERENCES staff(hospital_id, staff_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_lab_records_hospital_status_time ON lab_records(hospital_id, status, created_at);
+
+-- ======================= EXTENSIONS: SHARED REPORT PUBLISHING =======================
+CREATE TABLE IF NOT EXISTS shared_reports (
+    shared_report_id INTEGER PRIMARY KEY,
+    hospital_id INTEGER NOT NULL,
+    patient_id INTEGER NOT NULL,
+    report_type TEXT NOT NULL,
+    source_record_id INTEGER NOT NULL,
+    shared_to_patient INTEGER NOT NULL DEFAULT 1,
+    shared_to_doctor INTEGER NOT NULL DEFAULT 1,
+    share_notes TEXT,
+    shared_by_staff_id INTEGER,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE (hospital_id, report_type, source_record_id),
+    FOREIGN KEY (hospital_id) REFERENCES hospitals(hospital_id) ON DELETE CASCADE,
+    FOREIGN KEY (hospital_id, patient_id) REFERENCES patients(hospital_id, patient_id) ON DELETE CASCADE,
+    FOREIGN KEY (hospital_id, shared_by_staff_id) REFERENCES staff(hospital_id, staff_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_shared_reports_hospital_patient_time ON shared_reports(hospital_id, patient_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_shared_reports_hospital_type ON shared_reports(hospital_id, report_type, source_record_id);
+
+-- ======================= EXTENSIONS: FLEET MANAGEMENT =======================
+CREATE TABLE IF NOT EXISTS fleet_management (
+    fleet_id INTEGER PRIMARY KEY,
+    hospital_id INTEGER NOT NULL,
+    plate_number TEXT NOT NULL,
+    vehicle_type TEXT NOT NULL,
+    model_name TEXT,
+    assigned_driver TEXT,
+    mission_patient_name TEXT,
+    status TEXT NOT NULL DEFAULT 'FREE',
+    destination TEXT,
+    eta_return TEXT,
+    notes TEXT,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE (hospital_id, fleet_id),
+    UNIQUE (hospital_id, plate_number),
+    FOREIGN KEY (hospital_id) REFERENCES hospitals(hospital_id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_fleet_management_hospital_status_time ON fleet_management(hospital_id, status, created_at);
+
+-- ======================= EXTENSIONS: OPERATIONS, BEDS & ACTIVITY AUDIT =======================
+CREATE TABLE IF NOT EXISTS operational_units (
+    unit_id INTEGER PRIMARY KEY,
+    hospital_id INTEGER NOT NULL,
+    unit_name TEXT NOT NULL,
+    unit_type TEXT NOT NULL,
+    total_beds INTEGER NOT NULL DEFAULT 0,
+    status TEXT NOT NULL DEFAULT 'ACTIVE',
+    is_active INTEGER NOT NULL DEFAULT 1,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE (hospital_id, unit_id),
+    UNIQUE (hospital_id, unit_name, unit_type),
+    FOREIGN KEY (hospital_id) REFERENCES hospitals(hospital_id) ON DELETE CASCADE
+);
+
+-- NOTE:
+-- Do not create operational_units unit_type index in static schema bootstrap.
+-- Legacy databases may have older operational_units table structure (without unit_type),
+-- and executescript would fail during import before runtime migration hooks run.
+-- The runtime migration in main.py creates this index safely after adding columns.
+--
+-- Do not create unit_type/status bed index in static schema bootstrap.
+-- Legacy databases may have older beds table structure (without these columns),
+-- and executescript would fail during import before runtime migration hooks run.
+-- The runtime migration in main.py creates this index safely after adding columns.
+
+CREATE TABLE IF NOT EXISTS activity_audit (
+    activity_id INTEGER PRIMARY KEY,
+    hospital_id INTEGER NOT NULL,
+    actor_user_id INTEGER,
+    actor_staff_id INTEGER,
+    actor_role TEXT,
+    module TEXT NOT NULL,
+    action TEXT NOT NULL,
+    entity_type TEXT,
+    entity_id INTEGER,
+    details_json TEXT,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (hospital_id) REFERENCES hospitals(hospital_id) ON DELETE CASCADE,
+    FOREIGN KEY (actor_user_id) REFERENCES users(user_id),
+    FOREIGN KEY (hospital_id, actor_staff_id) REFERENCES staff(hospital_id, staff_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_activity_audit_hospital_module_time ON activity_audit(hospital_id, module, created_at);
+
+-- ======================= EXTENSIONS: FLEET TRIP & FUEL METRICS =======================
+CREATE TABLE IF NOT EXISTS fleet_trip_logs (
+    trip_id INTEGER PRIMARY KEY,
+    hospital_id INTEGER NOT NULL,
+    fleet_id INTEGER NOT NULL,
+    destination TEXT,
+    patient_name TEXT,
+    assigned_driver TEXT,
+    trip_status TEXT NOT NULL DEFAULT 'COMPLETED',
+    started_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    ended_at TEXT,
+    notes TEXT,
+    created_by_staff_id INTEGER,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (hospital_id) REFERENCES hospitals(hospital_id) ON DELETE CASCADE,
+    FOREIGN KEY (hospital_id, fleet_id) REFERENCES fleet_management(hospital_id, fleet_id) ON DELETE CASCADE,
+    FOREIGN KEY (hospital_id, created_by_staff_id) REFERENCES staff(hospital_id, staff_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_fleet_trips_hospital_fleet_time ON fleet_trip_logs(hospital_id, fleet_id, started_at);
+
+CREATE TABLE IF NOT EXISTS fleet_fuel_logs (
+    fuel_log_id INTEGER PRIMARY KEY,
+    hospital_id INTEGER NOT NULL,
+    fleet_id INTEGER NOT NULL,
+    liters REAL NOT NULL DEFAULT 0,
+    cost_amount REAL NOT NULL DEFAULT 0,
+    fuel_date TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    notes TEXT,
+    expense_id INTEGER,
+    created_by_staff_id INTEGER,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (hospital_id) REFERENCES hospitals(hospital_id) ON DELETE CASCADE,
+    FOREIGN KEY (hospital_id, fleet_id) REFERENCES fleet_management(hospital_id, fleet_id) ON DELETE CASCADE,
+    FOREIGN KEY (hospital_id, expense_id) REFERENCES expenses(hospital_id, expense_id),
+    FOREIGN KEY (hospital_id, created_by_staff_id) REFERENCES staff(hospital_id, staff_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_fleet_fuel_hospital_fleet_date ON fleet_fuel_logs(hospital_id, fleet_id, fuel_date);

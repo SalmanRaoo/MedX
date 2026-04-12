@@ -33,6 +33,11 @@ export default function Home() {
               <Link to="/pricing" className="inline-flex items-center justify-center gap-2 rounded-xl bg-cyan-600 px-6 py-3 text-sm font-semibold text-white shadow-lg shadow-cyan-600/25 transition hover:bg-cyan-700">View Plans <ArrowRight className="h-4 w-4" /></Link>
               <Link to="/about" className="inline-flex items-center justify-center rounded-xl border border-slate-300 bg-white px-6 py-3 text-sm font-semibold text-slate-700 transition hover:border-cyan-300 hover:text-cyan-700">Learn About MedX</Link>
             </div>
+            <div className="flex flex-wrap items-center gap-3 text-sm">
+              <Link to="/login/staff" className="font-semibold text-cyan-700 hover:underline">Hospital Staff Log In</Link>
+              <span className="text-slate-300">|</span>
+              <Link to="/login/patient" className="font-semibold text-cyan-700 hover:underline">Patient Log In</Link>
+            </div>
           </div>
 
           <div className="grid gap-4">

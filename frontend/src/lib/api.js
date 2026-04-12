@@ -27,7 +27,7 @@ api.interceptors.response.use(
     if (status === 401) {
       localStorage.removeItem("medx_token");
       localStorage.removeItem("medx_user");
-      if (window.location.pathname !== "/login") {
+      if (!window.location.pathname.startsWith("/login")) {
         window.location.href = "/login";
       }
     }
