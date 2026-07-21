@@ -143,7 +143,7 @@ export default function RadiologyDashboard() {
       active = false;
       clearTimeout(t);
     };
-  }, [patientSearch, patientId]);
+  }, [patientSearch]);
 
   useEffect(() => {
     loadRecords(patientId);

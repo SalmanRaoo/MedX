@@ -86,7 +86,7 @@ export default function DoctorAIImagingLabPage() {
       active = false;
       clearTimeout(t);
     };
-  }, [patientSearch, patientId]);
+  }, [patientSearch]);
 
   const onFileChange = async (zoneKey, e) => {
     const file = e.target.files?.[0];
@@ -292,4 +292,3 @@ export default function DoctorAIImagingLabPage() {
     </DoctorWorkspaceLayout>
   );
 }
-

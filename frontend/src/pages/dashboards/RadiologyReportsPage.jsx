@@ -41,10 +41,15 @@ export default function RadiologyReportsPage() {
       const items = data?.items || [];
       setRecords(items);
       setSelectedId((prev) => {
-        if (routeRecordId > 0) return routeRecordId;
+        if (routeRecordId > 0 && items.find((r) => Number(r.imaging_record_id) === Number(routeRecordId))) {
+          return routeRecordId;
+        }
         if (prev && items.find((r) => Number(r.imaging_record_id) === Number(prev))) return prev;
         return items.length ? items[0].imaging_record_id : null;
       });
+      if (!items.length) {
+        setRecordDetail(null);
+      }
     } catch (err) {
       setError(err?.response?.data?.detail || "Unable to load radiology reports.");
     } finally {
@@ -61,10 +66,14 @@ export default function RadiologyReportsPage() {
   }, [routeRecordId]);
 
   useEffect(() => {
-    if (!selectedId) return;
+    if (!selectedId) {
+      setRecordDetail(null);
+      return;
+    }
     let active = true;
     const fetchDetail = async () => {
       try {
+        setError("");
         const params = {};
         if (filterMrn.trim()) params.patient_mrn = filterMrn.trim();
         const { data } = await api.get(`/radiology/imaging-records/${selectedId}`, { params });
@@ -73,7 +82,23 @@ export default function RadiologyReportsPage() {
         const notes = data?.record?.doctor_notes || "";
         setManualImpression(notes);
       } catch (err) {
+        if (err?.response?.status === 404 && filterMrn.trim()) {
+          try {
+            const { data } = await api.get(`/radiology/imaging-records/${selectedId}`);
+            if (!active) return;
+            setRecordDetail(data || null);
+            const notes = data?.record?.doctor_notes || "";
+            setManualImpression(notes);
+            return;
+          } catch (fallbackErr) {
+            if (!active) return;
+            setRecordDetail(null);
+            setError(fallbackErr?.response?.data?.detail || "Unable to load radiology report details.");
+            return;
+          }
+        }
         if (!active) return;
+        setRecordDetail(null);
         setError(err?.response?.data?.detail || "Unable to load radiology report details.");
       }
     };
@@ -81,7 +106,7 @@ export default function RadiologyReportsPage() {
     return () => {
       active = false;
     };
-  }, [selectedId]);
+  }, [selectedId, filterMrn]);
 
   const filteredRecords = useMemo(() => {
     const q = searchText.trim().toLowerCase();

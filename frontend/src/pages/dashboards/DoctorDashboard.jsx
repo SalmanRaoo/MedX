@@ -100,7 +100,7 @@ export default function DoctorDashboard() {
       active = false;
       clearTimeout(t);
     };
-  }, [patientSearch, patientId]);
+  }, [patientSearch]);
 
   const filteredTests = useMemo(() => {
     const q = testSearch.trim().toLowerCase();

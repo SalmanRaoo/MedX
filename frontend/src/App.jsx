@@ -22,6 +22,7 @@ import AdminUserAccessPage from "./pages/AdminUserAccessPage";
 import AccountSecurity from "./pages/AccountSecurity";
 import SuperAdminDashboard from "./pages/dashboards/SuperAdminDashboard";
 import SuperAdminBlockedUsersPage from "./pages/dashboards/SuperAdminBlockedUsersPage";
+import SuperAdminPricingPage from "./pages/dashboards/SuperAdminPricingPage";
 import DoctorDashboard from "./pages/dashboards/DoctorDashboard";
 import DoctorMedicationsPage from "./pages/dashboards/DoctorMedicationsPage";
 import DoctorClinicalPage from "./pages/dashboards/DoctorClinicalPage";
@@ -80,6 +81,7 @@ function App() {
 
           <Route path="/dashboard/super-admin" element={<ProtectedRoute><RoleRoute allowedRoles={["SUPER_ADMIN"]}><SuperAdminDashboard /></RoleRoute></ProtectedRoute>} />
           <Route path="/dashboard/super-admin/blocked" element={<ProtectedRoute><RoleRoute allowedRoles={["SUPER_ADMIN"]}><SuperAdminBlockedUsersPage /></RoleRoute></ProtectedRoute>} />
+          <Route path="/dashboard/super-admin/pricing" element={<ProtectedRoute><RoleRoute allowedRoles={["SUPER_ADMIN"]}><SuperAdminPricingPage /></RoleRoute></ProtectedRoute>} />
 
           <Route path="/dashboard/admin" element={<ProtectedRoute><RoleRoute allowedRoles={["ADMIN", "SUPER_ADMIN"]}><DashboardLayout /></RoleRoute></ProtectedRoute>} />
           <Route path="/dashboard/settings" element={<ProtectedRoute><RoleRoute allowedRoles={["ADMIN", "SUPER_ADMIN"]}><Settings /></RoleRoute></ProtectedRoute>} />

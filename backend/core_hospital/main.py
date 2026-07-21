@@ -3,6 +3,8 @@ import uuid
 import re
 import os
 import pickle
+import base64
+from pathlib import Path
 from datetime import date, datetime, timedelta
 from decimal import Decimal
 from typing import Any, Dict, List, Optional
@@ -107,6 +109,14 @@ class PurchasePlanRequest(BaseModel):
     billing_cycle: str = "monthly"
 
 
+class SubscriptionPlanUpdateRequest(BaseModel):
+    plan_name: Optional[str] = None
+    monthly_price: Optional[float] = None
+    yearly_price: Optional[float] = None
+    features: Optional[List[str]] = None
+    is_active: Optional[bool] = None
+
+
 class AIReportRequest(BaseModel):
     report_title: str
     source_context: str
@@ -152,6 +162,68 @@ def _require_super_admin(current_user: Dict[str, Any]) -> None:
 
 def _table_has_column(table, column_name: str) -> bool:
     return column_name in table.c
+
+
+def _recent_order_expr(table, preferred_column: str, fallback_column: str):
+    if _table_has_column(table, preferred_column):
+        return table.c[preferred_column].desc()
+    if _table_has_column(table, fallback_column):
+        return table.c[fallback_column].desc()
+    for col in table.primary_key.columns:
+        return col.desc()
+    return None
+
+
+def _ensure_hospital_subscription_columns(db: Session) -> None:
+    table = models.TABLES.get("hospital_subscriptions")
+    if table is None:
+        return
+
+    desired_columns = {
+        "suspended_at": "TEXT",
+    }
+    changed = False
+    for col, col_type in desired_columns.items():
+        if _table_has_column(table, col):
+            continue
+        db.execute(text(f"ALTER TABLE hospital_subscriptions ADD COLUMN {col} {col_type}"))
+        changed = True
+
+    if changed:
+        db.commit()
+        models.load_tables()
+
+    db.execute(
+        text(
+            "CREATE INDEX IF NOT EXISTS idx_subscriptions_hospital_started ON hospital_subscriptions(hospital_id, started_at DESC)"
+        )
+    )
+    db.commit()
+
+
+def _ensure_patient_table_compatibility(db: Session) -> None:
+    table = models.TABLES.get("patients")
+    if table is None:
+        return
+
+    changed = False
+    if not _table_has_column(table, "created_at"):
+        db.execute(text("ALTER TABLE patients ADD COLUMN created_at TEXT"))
+        changed = True
+
+    if changed:
+        db.commit()
+        models.load_tables()
+        table = models.TABLES.get("patients")
+
+    if table is not None and _table_has_column(table, "created_at"):
+        db.execute(
+            text(
+                "UPDATE patients SET created_at = COALESCE(NULLIF(created_at, ''), CURRENT_TIMESTAMP)"
+            )
+        )
+        db.execute(text("CREATE INDEX IF NOT EXISTS idx_patients_hospital_created ON patients(hospital_id, created_at)"))
+        db.commit()
 
 
 def _seed_plans(db: Session) -> None:
@@ -291,6 +363,8 @@ def startup_seed() -> None:
     db = next(db_gen)
     try:
         _bootstrap_initial_data(db)
+        _ensure_hospital_subscription_columns(db)
+        _ensure_patient_table_compatibility(db)
         _ensure_pharmacy_support_tables(db)
         _ensure_operational_units_table(db)
         _ensure_activity_audit_table(db)
@@ -452,6 +526,22 @@ def _safe_json_dict(raw_value: Any, fallback: Optional[Dict[str, Any]] = None) -
         return dict(fallback)
     except Exception:
         return dict(fallback)
+
+
+def _safe_json_list(raw_value: Any, fallback: Optional[List[Any]] = None) -> List[Any]:
+    if fallback is None:
+        fallback = []
+    if isinstance(raw_value, list):
+        return list(raw_value)
+    if raw_value in [None, ""]:
+        return list(fallback)
+    try:
+        parsed = json.loads(raw_value)
+        if isinstance(parsed, list):
+            return list(parsed)
+        return list(fallback)
+    except Exception:
+        return list(fallback)
 
 
 def _ensure_global_settings_table(db: Session) -> None:
@@ -704,7 +794,8 @@ def public_plans(db: Session = Depends(get_db)) -> Dict[str, Any]:
     items = []
     for r in rows:
         item = _serialize_row(r)
-        item["features"] = json.loads(item.get("features_json") or "[]")
+        item["features"] = _safe_json_list(item.get("features_json"), [])
+        item["is_active"] = bool(item.get("is_active"))
         items.append(item)
     return {"count": len(items), "items": items}
 
@@ -942,13 +1033,16 @@ def public_book_appointment(
     if occupied:
         raise HTTPException(status_code=409, detail="Selected slot is already booked for this doctor")
 
-    existing_patient = db.execute(
+    patient_recent_order = _recent_order_expr(patients, "created_at", "patient_id")
+    existing_patient_query = (
         select(patients)
         .where(patients.c.hospital_id == hospital_id)
         .where(patients.c.full_name == patient_name)
         .where(patients.c.phone_number == patient_phone)
-        .order_by(patients.c.created_at.desc())
-    ).first()
+    )
+    if patient_recent_order is not None:
+        existing_patient_query = existing_patient_query.order_by(patient_recent_order)
+    existing_patient = db.execute(existing_patient_query).first()
 
     if existing_patient:
         patient_id = int(existing_patient.patient_id)
@@ -1304,32 +1398,156 @@ def super_admin_subscriptions(
     current_user: Dict[str, Any] = Depends(get_current_user),
 ) -> Dict[str, Any]:
     _require_super_admin(current_user)
+    _ensure_hospital_subscription_columns(db)
 
     subs = models.TABLES["hospital_subscriptions"]
     plans = models.TABLES["subscription_plans"]
     hospitals = models.TABLES["hospitals"]
 
-    rows = db.execute(
+    subscription_rows = db.execute(
         select(
             subs.c.subscription_id,
+            subs.c.hospital_id,
             subs.c.status,
             subs.c.billing_cycle,
             subs.c.started_at,
             subs.c.expires_at,
+            subs.c.suspended_at,
             subs.c.amount_paid,
             subs.c.purchased_by_email,
-            hospitals.c.hospital_id,
-            hospitals.c.hospital_name,
             plans.c.plan_code,
             plans.c.plan_name,
         )
-        .select_from(
-            subs.join(hospitals, subs.c.hospital_id == hospitals.c.hospital_id).join(plans, subs.c.plan_id == plans.c.plan_id)
-        )
-        .order_by(subs.c.expires_at.asc())
+        .select_from(subs.join(plans, subs.c.plan_id == plans.c.plan_id))
+        .order_by(subs.c.hospital_id.asc(), subs.c.started_at.desc(), subs.c.subscription_id.desc())
     ).fetchall()
 
-    return {"count": len(rows), "items": [_serialize_row(r) for r in rows]}
+    latest_sub_by_hospital: Dict[int, Dict[str, Any]] = {}
+    for row in subscription_rows:
+        serialized = _serialize_row(row)
+        hid = int(serialized.get("hospital_id") or 0)
+        if hid > 0 and hid not in latest_sub_by_hospital:
+            latest_sub_by_hospital[hid] = serialized
+
+    hospital_rows = db.execute(
+        select(
+            hospitals.c.hospital_id,
+            hospitals.c.hospital_code,
+            hospitals.c.hospital_name,
+            hospitals.c.status.label("hospital_status"),
+            hospitals.c.created_at.label("hospital_created_at"),
+        ).order_by(hospitals.c.hospital_name.asc())
+    ).fetchall()
+
+    items: List[Dict[str, Any]] = []
+    for h in hospital_rows:
+        hospital_item = _serialize_row(h)
+        latest = latest_sub_by_hospital.get(int(hospital_item["hospital_id"]))
+        if latest:
+            hospital_item.update(
+                {
+                    "subscription_id": latest.get("subscription_id"),
+                    "status": latest.get("status"),
+                    "billing_cycle": latest.get("billing_cycle"),
+                    "started_at": latest.get("started_at"),
+                    "expires_at": latest.get("expires_at"),
+                    "suspended_at": latest.get("suspended_at"),
+                    "amount_paid": latest.get("amount_paid"),
+                    "purchased_by_email": latest.get("purchased_by_email"),
+                    "plan_code": latest.get("plan_code"),
+                    "plan_name": latest.get("plan_name"),
+                }
+            )
+        else:
+            hospital_item.update(
+                {
+                    "subscription_id": None,
+                    "status": "NO_SUBSCRIPTION",
+                    "billing_cycle": None,
+                    "started_at": None,
+                    "expires_at": None,
+                    "suspended_at": None,
+                    "amount_paid": 0,
+                    "purchased_by_email": None,
+                    "plan_code": None,
+                    "plan_name": None,
+                }
+            )
+        items.append(hospital_item)
+
+    return {"count": len(items), "items": items}
+
+
+@app.get("/super-admin/pricing/plans")
+def super_admin_pricing_plans(
+    db: Session = Depends(get_db),
+    current_user: Dict[str, Any] = Depends(get_current_user),
+) -> Dict[str, Any]:
+    _require_super_admin(current_user)
+
+    plans = models.TABLES["subscription_plans"]
+    rows = db.execute(select(plans).order_by(plans.c.plan_id.asc())).fetchall()
+    items: List[Dict[str, Any]] = []
+    for row in rows:
+        item = _serialize_row(row)
+        item["features"] = _safe_json_list(item.get("features_json"), [])
+        item["is_active"] = bool(item.get("is_active"))
+        items.append(item)
+    return {"count": len(items), "items": items}
+
+
+@app.post("/super-admin/pricing/plans/{plan_id}")
+def super_admin_pricing_update_plan(
+    plan_id: int,
+    payload: SubscriptionPlanUpdateRequest,
+    db: Session = Depends(get_db),
+    current_user: Dict[str, Any] = Depends(get_current_user),
+) -> Dict[str, Any]:
+    _require_super_admin(current_user)
+
+    plans = models.TABLES["subscription_plans"]
+    existing = db.execute(select(plans).where(plans.c.plan_id == int(plan_id))).first()
+    if not existing:
+        raise HTTPException(status_code=404, detail="Plan not found")
+
+    updates: Dict[str, Any] = {}
+
+    if payload.plan_name is not None:
+        plan_name = payload.plan_name.strip()
+        if not plan_name:
+            raise HTTPException(status_code=400, detail="plan_name cannot be empty")
+        updates["plan_name"] = plan_name
+
+    if payload.monthly_price is not None:
+        monthly = float(payload.monthly_price)
+        if monthly < 0:
+            raise HTTPException(status_code=400, detail="monthly_price cannot be negative")
+        updates["monthly_price"] = monthly
+
+    if payload.yearly_price is not None:
+        yearly = float(payload.yearly_price)
+        if yearly < 0:
+            raise HTTPException(status_code=400, detail="yearly_price cannot be negative")
+        updates["yearly_price"] = yearly
+
+    if payload.features is not None:
+        cleaned_features = [str(feature).strip() for feature in payload.features if str(feature).strip()]
+        updates["features_json"] = json.dumps(cleaned_features)
+
+    if payload.is_active is not None:
+        updates["is_active"] = 1 if payload.is_active else 0
+
+    if not updates:
+        raise HTTPException(status_code=400, detail="No fields provided for update")
+
+    db.execute(update(plans).where(plans.c.plan_id == int(plan_id)).values(**updates))
+    db.commit()
+
+    refreshed = db.execute(select(plans).where(plans.c.plan_id == int(plan_id))).first()
+    item = _serialize_row(refreshed)
+    item["features"] = _safe_json_list(item.get("features_json"), [])
+    item["is_active"] = bool(item.get("is_active"))
+    return {"status": "updated", "item": item}
 
 
 @app.get("/super-admin/overview")
@@ -2874,41 +3092,157 @@ RADIOLOGY_AI_TRIGGERS: Dict[str, Dict[str, str]] = {
     },
 }
 
+UPLOADED_REPORTS_DIR = Path(__file__).resolve().parent / "uploaded_reports"
+
+
+def _slug_text(value: Any, fallback: str) -> str:
+    text_value = re.sub(r"[^a-zA-Z0-9_-]+", "_", str(value or "").strip()).strip("_").lower()
+    return text_value or fallback
+
+
+def _save_scan_data_url_file(
+    scan_image_data_url: Optional[str],
+    hospital_id: int,
+    patient_id: int,
+    modality: str,
+    body_part: str,
+) -> Optional[str]:
+    raw = str(scan_image_data_url or "").strip()
+    if not raw:
+        return None
+    if not raw.startswith("data:image/") or ";base64," not in raw:
+        return None
+
+    header, encoded = raw.split(";base64,", 1)
+    mime = header.replace("data:", "").strip().lower()
+    ext_map = {
+        "image/jpeg": ".jpg",
+        "image/jpg": ".jpg",
+        "image/png": ".png",
+        "image/webp": ".webp",
+        "image/gif": ".gif",
+        "image/bmp": ".bmp",
+        "image/tiff": ".tiff",
+        "image/svg+xml": ".svg",
+    }
+    ext = ext_map.get(mime, ".png")
+
+    try:
+        file_bytes = base64.b64decode(encoded, validate=True)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid uploaded image payload")
+
+    UPLOADED_REPORTS_DIR.mkdir(parents=True, exist_ok=True)
+    stamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S_%f")
+    file_name = (
+        f"h{int(hospital_id)}_p{int(patient_id)}_"
+        f"{_slug_text(modality, 'modality')}_{_slug_text(body_part, 'body_part')}_{stamp}{ext}"
+    )
+    target = UPLOADED_REPORTS_DIR / file_name
+    target.write_bytes(file_bytes)
+    return str(target)
+
 
 def _ensure_imaging_records_table(db: Session) -> None:
-    if models.TABLES.get("imaging_records") is not None:
-        return
-    db.execute(
-        text(
+    if models.TABLES.get("imaging_records") is None:
+        db.execute(
+            text(
+                """
+            CREATE TABLE IF NOT EXISTS imaging_records (
+                imaging_record_id INTEGER PRIMARY KEY,
+                hospital_id INTEGER NOT NULL,
+                patient_id INTEGER NOT NULL,
+                patient_mrn_snapshot TEXT NOT NULL,
+                patient_name_snapshot TEXT,
+                modality TEXT NOT NULL,
+                body_part TEXT NOT NULL,
+                study_title TEXT,
+                source_page TEXT NOT NULL DEFAULT 'RADIOLOGY_DASHBOARD',
+                request_id INTEGER,
+                technician_notes TEXT,
+                doctor_notes TEXT,
+                ai_model_key TEXT,
+                ai_result TEXT,
+                ai_confidence TEXT,
+                ai_findings_json TEXT,
+                scan_image_data_url TEXT,
+                scan_file_path TEXT,
+                status TEXT NOT NULL DEFAULT 'DRAFT',
+                doctor_signature_name TEXT,
+                doctor_signature_at TEXT,
+                recorded_by_staff_id INTEGER,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )
             """
-        CREATE TABLE IF NOT EXISTS imaging_records (
-            imaging_record_id INTEGER PRIMARY KEY,
-            hospital_id INTEGER NOT NULL,
-            patient_id INTEGER NOT NULL,
-            patient_mrn_snapshot TEXT NOT NULL,
-            patient_name_snapshot TEXT,
-            modality TEXT NOT NULL,
-            body_part TEXT NOT NULL,
-            study_title TEXT,
-            source_page TEXT NOT NULL DEFAULT 'RADIOLOGY_DASHBOARD',
-            request_id INTEGER,
-            technician_notes TEXT,
-            doctor_notes TEXT,
-            ai_model_key TEXT,
-            ai_result TEXT,
-            ai_confidence TEXT,
-            ai_findings_json TEXT,
-            scan_image_data_url TEXT,
-            status TEXT NOT NULL DEFAULT 'DRAFT',
-            doctor_signature_name TEXT,
-            doctor_signature_at TEXT,
-            recorded_by_staff_id INTEGER,
-            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )
         )
-        """
+        db.commit()
+        models.load_tables()
+
+    table = models.TABLES.get("imaging_records")
+    if table is None:
+        return
+
+    desired_columns = {
+        "patient_mrn_snapshot": "TEXT",
+        "patient_name_snapshot": "TEXT",
+        "source_page": "TEXT",
+        "request_id": "INTEGER",
+        "technician_notes": "TEXT",
+        "doctor_notes": "TEXT",
+        "ai_model_key": "TEXT",
+        "ai_result": "TEXT",
+        "ai_confidence": "TEXT",
+        "ai_findings_json": "TEXT",
+        "scan_image_data_url": "TEXT",
+        "scan_file_path": "TEXT",
+        "status": "TEXT",
+        "doctor_signature_name": "TEXT",
+        "doctor_signature_at": "TEXT",
+        "recorded_by_staff_id": "INTEGER",
+        "created_at": "TEXT",
+        "updated_at": "TEXT",
+    }
+    changed = False
+    for col, col_sql in desired_columns.items():
+        if _table_has_column(table, col):
+            continue
+        db.execute(text(f"ALTER TABLE imaging_records ADD COLUMN {col} {col_sql}"))
+        changed = True
+
+    if changed:
+        db.commit()
+        models.load_tables()
+        table = models.TABLES.get("imaging_records")
+        if table is None:
+            return
+
+    if _table_has_column(table, "source_page"):
+        db.execute(
+            text(
+                "UPDATE imaging_records SET source_page = COALESCE(NULLIF(source_page, ''), 'RADIOLOGY_DASHBOARD')"
+            )
         )
-    )
+    if _table_has_column(table, "status"):
+        db.execute(
+            text(
+                "UPDATE imaging_records SET status = COALESCE(NULLIF(status, ''), 'DRAFT')"
+            )
+        )
+    if _table_has_column(table, "created_at"):
+        db.execute(
+            text(
+                "UPDATE imaging_records SET created_at = COALESCE(NULLIF(created_at, ''), CURRENT_TIMESTAMP)"
+            )
+        )
+    if _table_has_column(table, "updated_at"):
+        db.execute(
+            text(
+                "UPDATE imaging_records SET updated_at = COALESCE(NULLIF(updated_at, ''), CURRENT_TIMESTAMP)"
+            )
+        )
+
     db.execute(
         text(
             "CREATE INDEX IF NOT EXISTS idx_imaging_records_hospital_status_time ON imaging_records(hospital_id, status, created_at)"
@@ -4125,7 +4459,10 @@ def lab_patient_search(
         term = f"%{q.strip()}%"
         query = query.where((patients.c.patient_mrn.like(term)) | (patients.c.full_name.like(term)))
 
-    rows = db.execute(query.order_by(patients.c.created_at.desc()).limit(limit)).fetchall()
+    patient_recent_order = _recent_order_expr(patients, "created_at", "patient_id")
+    if patient_recent_order is not None:
+        query = query.order_by(patient_recent_order)
+    rows = db.execute(query.limit(limit)).fetchall()
     return {"count": len(rows), "items": [_serialize_row(r) for r in rows]}
 
 
@@ -4771,6 +5108,13 @@ def create_imaging_record(
     ai_result = (payload.get("ai_result") or "").strip() or None
     ai_confidence = (payload.get("ai_confidence") or "").strip() or None
     scan_image_data_url = (payload.get("scan_image_data_url") or "").strip() or None
+    scan_file_path = _save_scan_data_url_file(
+        scan_image_data_url=scan_image_data_url,
+        hospital_id=hospital_id,
+        patient_id=patient_id,
+        modality=modality,
+        body_part=body_part,
+    )
     ai_findings = payload.get("ai_findings")
     if ai_findings is None:
         ai_findings = {}
@@ -4830,6 +5174,7 @@ def create_imaging_record(
             ai_confidence=ai_confidence,
             ai_findings_json=json.dumps(ai_findings),
             scan_image_data_url=scan_image_data_url,
+            scan_file_path=scan_file_path,
             status=status,
             recorded_by_staff_id=_get_current_staff_id(db, current_user),
             updated_at=now_iso,
@@ -4891,8 +5236,10 @@ def list_imaging_records(
         query = query.where(records.c.imaging_record_id == int(imaging_record_id))
     if patient_id is not None:
         query = query.where(records.c.patient_id == int(patient_id))
-    if patient_mrn:
-        query = query.where(records.c.patient_mrn_snapshot == str(patient_mrn).strip())
+    if patient_mrn and _table_has_column(records, "patient_mrn_snapshot"):
+        query = query.where(
+            func.lower(records.c.patient_mrn_snapshot) == str(patient_mrn).strip().lower()
+        )
     if request_id is not None:
         query = query.where(records.c.request_id == int(request_id))
     if modality:
@@ -4934,8 +5281,12 @@ def get_imaging_record(
     ).first()
     if not row:
         raise HTTPException(status_code=404, detail="Imaging record not found")
-    if patient_mrn and str(row.patient_mrn_snapshot or "").strip() != str(patient_mrn).strip():
-        raise HTTPException(status_code=404, detail="Imaging record not found for provided patient_mrn")
+    if patient_mrn and _table_has_column(records, "patient_mrn_snapshot"):
+        snapshot_mrn = str(getattr(row, "patient_mrn_snapshot", "") or "").strip().lower()
+        requested_mrn = str(patient_mrn).strip().lower()
+        if snapshot_mrn and snapshot_mrn != requested_mrn:
+            # Allow record lookup by ID even if patient MRN has been corrected later.
+            pass
 
     item = _serialize_row(row)
     try:
@@ -5517,7 +5868,10 @@ def pharmacy_patient_search(
             | (patients.c.full_name.like(term))
             | (patients.c.phone_number.like(term))
         )
-    rows = db.execute(query.order_by(patients.c.created_at.desc()).limit(limit)).fetchall()
+    patient_recent_order = _recent_order_expr(patients, "created_at", "patient_id")
+    if patient_recent_order is not None:
+        query = query.order_by(patient_recent_order)
+    rows = db.execute(query.limit(limit)).fetchall()
     return {"count": len(rows), "items": [_serialize_row(r) for r in rows]}
 
 
@@ -6558,7 +6912,10 @@ def nurse_patient_search(
         term = f"%{q.strip()}%"
         query = query.where((patients.c.patient_mrn.like(term)) | (patients.c.full_name.like(term)))
 
-    rows = db.execute(query.order_by(patients.c.created_at.desc()).limit(limit)).fetchall()
+    patient_recent_order = _recent_order_expr(patients, "created_at", "patient_id")
+    if patient_recent_order is not None:
+        query = query.order_by(patient_recent_order)
+    rows = db.execute(query.limit(limit)).fetchall()
     return {"count": len(rows), "items": [_serialize_row(r) for r in rows]}
 
 
@@ -9453,8 +9810,17 @@ def super_admin_pause_subscription(
     current_user: Dict[str, Any] = Depends(get_current_user),
 ) -> Dict[str, Any]:
     _require_super_admin(current_user)
+    _ensure_hospital_subscription_columns(db)
     subs = models.TABLES["hospital_subscriptions"]
-    db.execute(update(subs).where(subs.c.subscription_id == subscription_id).values(status="PAUSED"))
+    existing = db.execute(select(subs).where(subs.c.subscription_id == subscription_id)).first()
+    if not existing:
+        raise HTTPException(status_code=404, detail="Subscription not found")
+
+    values = {"status": "PAUSED"}
+    if _table_has_column(subs, "suspended_at"):
+        values["suspended_at"] = datetime.utcnow().isoformat()
+
+    db.execute(update(subs).where(subs.c.subscription_id == subscription_id).values(**values))
     db.commit()
     return {"status": "paused", "subscription_id": subscription_id}
 
@@ -9466,7 +9832,12 @@ def super_admin_resume_subscription(
     current_user: Dict[str, Any] = Depends(get_current_user),
 ) -> Dict[str, Any]:
     _require_super_admin(current_user)
+    _ensure_hospital_subscription_columns(db)
     subs = models.TABLES["hospital_subscriptions"]
+    existing = db.execute(select(subs).where(subs.c.subscription_id == subscription_id)).first()
+    if not existing:
+        raise HTTPException(status_code=404, detail="Subscription not found")
+
     db.execute(update(subs).where(subs.c.subscription_id == subscription_id).values(status="ACTIVE"))
     db.commit()
     return {"status": "active", "subscription_id": subscription_id}

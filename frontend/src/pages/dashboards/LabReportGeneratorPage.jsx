@@ -249,7 +249,7 @@ export default function LabReportGeneratorPage() {
       active = false;
       clearTimeout(t);
     };
-  }, [patientSearch, patientId]);
+  }, [patientSearch]);
 
   const toggleSymptom = (symptom) => {
     setSelectedSymptoms((prev) => (prev.includes(symptom) ? prev.filter((s) => s !== symptom) : [...prev, symptom]));

@@ -453,8 +453,3 @@ def ai_home():
         "status": "online",
         "health_endpoint": "/health",
     }
-
-
-
-
-
